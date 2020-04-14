@@ -22,3 +22,8 @@ Azure Sentinel is a **SIEM** (security information event management) and **SOAR*
 - **Detect.** Detect threats to protected and monitored resources as they happen, minimizing the time to react to threats.
 - **Investigate.** Powered with artificial intelligence, search for and discover malicious activities across all protected assets.
 - **Respond.** Once a threat is known, avoid manual actions and respond to threats with automating tasks.
+
+Tags
+Azure, Microsoft Azure, Azure Security, SIEM, Microsoft Cloud Security, Azure Sentinel, SOAR
+
+[TechNet Link](https://gallery.technet.microsoft.com/Getting-Started-with-Azure-730bcdf5)
