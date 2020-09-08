@@ -5,7 +5,8 @@ Control your Windows Virtual Desktop personal VM with just one click.
 ## Getting Started
 
 Simple App to Reduce Windows Virtual Desktop Cost using Microsoft Flow and Power Apps. 
-By: 3tallah - Microsoft Cloud Technologies
+
+*By: 3tallah - Microsoft Cloud Technologies
 
 ### Prerequisites
 
