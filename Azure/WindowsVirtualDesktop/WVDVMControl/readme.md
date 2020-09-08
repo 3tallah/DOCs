@@ -1,5 +1,7 @@
 # Reduce Windows Virtual Desktop Cost with the benefit of PowerApps
 
+ [![img](https://3tallah.com/wp-content/uploads/2020/09/Reduce-WVD-Cost-Using-PowerApps-and-Microsoft-Flow.png)](https://3tallah.com/reduce-wvd-cost-using-powerapps-and-microsoft-flow/)
+
 Control your Windows Virtual Desktop personal VM with just one click.
 
 ## Getting Started
@@ -17,7 +19,7 @@ By: [3tallahBlog - Microsoft Cloud Technologies](https://3tallah.com/)
 
 ## Deployment
 
-For detailed explanation please refer to this blogpost https://3tallah.com/
+For detailed explanation please refer to this blogpost [Reduce WVD Cost Using PowerApps and Microsoft Flow](https://3tallah.com/reduce-wvd-cost-using-powerapps-and-microsoft-flow/)
 
 ## Built With
 
