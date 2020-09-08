@@ -4,5 +4,6 @@ Repository containing all the documentation that have created for self-learning 
 
 ## [Azure Firewall](https://github.com/3tallah/DOCs/tree/master/Azure/Azure%20Firewall)
 ## [Azure Sentinel](https://github.com/3tallah/DOCs/tree/master/Azure/Azure%20Sentinel)
+## [Windows Virtual Desktop](https://github.com/3tallah/DOCs/tree/master/Azure/WindowsVirtualDesktop)
 ## [List of Intune Compliance and Configuration Policies](https://github.com/3tallah/DOCs/tree/master/M365/Intune/IntuneComplianceAndConfigurationPolicies)
 
