@@ -4,6 +4,8 @@
 
 Powerapps Package with the related Microsoft Flows rescue that will save your time creating and customizing your WVD App to reduce Reduce Windows Virtual Desktop Cost
 
+ [![img](https://raw.githubusercontent.com/3tallah/DOCs/master/Azure/WindowsVirtualDesktop/WVDVMControl/2020-09-08_13-15-15.jpg)](https://3tallah.com/reduce-wvd-cost-using-powerapps-and-microsoft-flow/)
+
 Control your Windows Virtual Desktop personal VM with just one click.
 
 
