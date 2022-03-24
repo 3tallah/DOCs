@@ -1,6 +1,16 @@
+### Download Registry Files Samples and update them based on your Environment.
+
+WVD FSLogix Profile Configuration > [FSLogix.reg](https://github.com/3tallah/DOCs/blob/master/Azure/WindowsVirtualDesktop/AVDRegistrySettings/FSLogix.reg)
+
+WVD OneDrive SSO GPO > [OneDrive.reg](https://github.com/3tallah/DOCs/blob/master/Azure/WindowsVirtualDesktop/AVDRegistrySettings/OneDrive.reg)
+
+WVD Enabling session shadowing > [Terminal Server.reg](https://github.com/3tallah/DOCs/blob/master/Azure/WindowsVirtualDesktop/AVDRegistrySettings/Terminal%20Server.reg)
+
+WVD Antivirus exclusions > [Windows Defender.reg](https://github.com/3tallah/DOCs/blob/master/Azure/WindowsVirtualDesktop/AVDRegistrySettings/Windows%20Defender.reg)
+
 ### Exclude Teams and browsers Cache with redirections.xml to reduce profile container size
 
-1 - Prepare the XML file.
+1 - Prepare the XML file. [ReadySample](https://github.com/3tallah/DOCs/blob/master/Azure/WindowsVirtualDesktop/AVDRegistrySettings/redirections.xml)
 
 2 - Save the XML under this Location
 
