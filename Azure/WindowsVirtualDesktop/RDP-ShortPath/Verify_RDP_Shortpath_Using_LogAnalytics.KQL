@@ -1,0 +1,16 @@
+#Use the below Code to monitor AVD connections 
+let Events = WVDConnections | where UserName == "userupn" ;
+Events
+| where State == "Connected"
+| project CorrelationId , UserName, ResourceAlias , StartTime=TimeGenerated, UdpUse, SessionHostName, SessionHostSxSStackVersion
+| join (Events
+| where State == "Completed"
+| project EndTime=TimeGenerated, CorrelationId, UdpUse)
+on CorrelationId
+| project StartTime, Duration = EndTime - StartTime, ResourceAlias, UdpUse,  SessionHostName, SessionHostSxSStackVersion
+| sort by StartTime asc
+
+
+#You can verify if RDP Shortpath is enabled for a specific user session by running the following Log Analytics query:
+WVDCheckpoints 
+|where Name contains "Shortpath"
