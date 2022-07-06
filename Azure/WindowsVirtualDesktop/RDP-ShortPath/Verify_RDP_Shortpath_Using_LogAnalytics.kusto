@@ -1,4 +1,4 @@
-#Use the below Code to monitor AVD connections 
+//Use the below Code to monitor AVD connections 
 let Events = WVDConnections | where UserName == "userupn" ;
 Events
 | where State == "Connected"
@@ -11,6 +11,6 @@ on CorrelationId
 | sort by StartTime asc
 
 
-#You can verify if RDP Shortpath is enabled for a specific user session by running the following Log Analytics query:
+//You can verify if RDP Shortpath is enabled for a specific user session by running the following Log Analytics query:
 WVDCheckpoints 
 |where Name contains "Shortpath"
