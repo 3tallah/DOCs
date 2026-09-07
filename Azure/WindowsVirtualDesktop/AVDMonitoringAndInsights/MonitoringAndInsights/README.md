@@ -1,6 +1,6 @@
 # Monitoring and Insights
 
-Read-only configuration checks and ingestion validation for Azure Virtual Desktop, plus a controlled event generator and local diagnostic collector.
+Read-only configuration checks and ingestion validation for Azure Virtual Desktop, plus a cost-optimized monitoring deployment script, controlled event generator and local diagnostic collector.
 
 ## Architecture
 
@@ -22,6 +22,7 @@ AVD Agent health is distinct from AMA health. Guest data and service diagnostics
 | [Test-AVDHostPoolDiagnosticSettings.ps1](Test-AVDHostPoolDiagnosticSettings.ps1) | Admin workstation/Cloud Shell | allLogs, available categories and expected destination |
 | [Test-AVDWorkspaceDiagnosticSettings.ps1](Test-AVDWorkspaceDiagnosticSettings.ps1) | Admin workstation/Cloud Shell | AVD Workspace diagnostic coverage |
 | [Test-AVDDCRAssociation.ps1](Test-AVDDCRAssociation.ps1) | Admin workstation/Cloud Shell | Every registered VM's AMA extension, identity selection and DCR routes |
+| [Set-AVDCostOptimizedMonitoring.ps1](Set-AVDCostOptimizedMonitoring.ps1) | Admin workstation/Cloud Shell | Creates/updates one cost-optimized DCR and associates it with every registered session-host VM |
 | [Test-AVDSessionHostMonitoring.ps1](Test-AVDSessionHostMonitoring.ps1) | Each session host, elevated | Services, registration flag, AMA cache/logs, event channels and 20 counters |
 | [Test-AVDLogAnalyticsIngestion.ps1](Test-AVDLogAnalyticsIngestion.ps1) | Admin workstation/Cloud Shell | Table activity, expected AMA hosts and generated test events |
 | [New-AVDMonitoringTestEvents.ps1](New-AVDMonitoringTestEvents.ps1) | Session host, elevated Windows PowerShell 5.1 | One Application Warning 9001 and Error 9002 |
@@ -41,6 +42,8 @@ Set-AzContext -Subscription '<subscription-id>'
 
 The operator needs resource read access across the host pool, AVD Workspace, VMs, extensions, diagnostic settings/categories, DCR associations, DCRs and Log Analytics workspace. Reader at the relevant scopes is a straightforward option. Log queries also need data access such as Log Analytics Reader. The prerequisite resource GET checks do not certify all child-resource or query permissions.
 
+`Set-AVDCostOptimizedMonitoring.ps1` is different from the validation scripts: it needs write access to create or update the selected DCR and to create/update DCR associations on every session-host VM. Use a least-privilege role that permits these operations at the DCR resource-group and VM scopes. It does not remove existing DCRs or associations. `-WhatIf` still reads the workspace and session-host inventory, but skips the DCR and association PUT operations.
+
 Run local checks elevated on the target Windows session host. The event generator and collector require Windows PowerShell 5.1. The local monitoring script accepts localized -CounterPaths and custom -EventLogNames.
 
 ARM IDs and workspace GUIDs are different:
@@ -48,6 +51,33 @@ ARM IDs and workspace GUIDs are different:
 - Diagnostic, prerequisite and DCR scripts take full ARM IDs.
 - Test-AVDLogAnalyticsIngestion takes the Log Analytics workspace GUID (customerId).
 - ExpectedVMResourceId takes VM ARM IDs, not the internal VM GUID or session-host registration ID.
+
+## Configure cost-optimized monitoring
+
+Run this script after signing in when you want a single, deliberately lower-volume DCR for the registered session hosts. It reads the Log Analytics workspace location and creates or updates the DCR in the workspace's subscription and resource group by default. Use `-DCRResourceGroupName` to place the DCR in another resource group in the same subscription. The DCR location follows the workspace location.
+
+~~~powershell
+.\Set-AVDCostOptimizedMonitoring.ps1 `
+    -HostPoolResourceId $hpId `
+    -LogAnalyticsWorkspaceResourceId $lawId `
+    -DCRName 'DCR-AVD-CostOptimized' `
+    -WhatIf
+
+.\Set-AVDCostOptimizedMonitoring.ps1 `
+    -HostPoolResourceId $hpId `
+    -LogAnalyticsWorkspaceResourceId $lawId
+~~~
+
+The default DCR name is `DCR-AVD-CostOptimized`; rerunning the script updates that DCR and uses the fixed association name `AVD-CostOptimized`. It discovers every registered session host, resolves its VM resource ID, checks the VM identity and AMA extension, and then reports the association result. A missing or invalid VM resource ID is reported for that host without stopping the remaining hosts. A shutdown host can be associated successfully, but ingestion begins when the VM runs.
+
+The generated DCR contains:
+
+- 14 performance counters sampled every 60 seconds, including aggregate physical-disk latency and per-session AVD density counters.
+- Six Windows Event XPath queries for System, Application, RDP/AVD session-manager channels and FSLogix Apps channels.
+- Critical, Error and Warning events only; informational session lifecycle data should come from AVD platform diagnostics such as `WVDConnections`.
+- `Microsoft-Perf` and `Microsoft-Event` routes to the selected Log Analytics workspace with `transformKql = source` and no duplicate Metrics destination.
+
+This profile deliberately excludes per-process User Input Delay, RemoteFX Network counters when AVD network telemetry is enabled, and per-disk physical counters to reduce cardinality and ingestion volume. Validate the resulting DCR and routes with [Test-AVDDCRAssociation.ps1](Test-AVDDCRAssociation.ps1), then verify actual ingestion with [Test-AVDLogAnalyticsIngestion.ps1](Test-AVDLogAnalyticsIngestion.ps1).
 
 ## 1. Check Azure configuration
 

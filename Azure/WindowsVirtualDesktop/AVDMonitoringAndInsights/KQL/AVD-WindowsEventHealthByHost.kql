@@ -1,0 +1,8 @@
+// Windows errors, warnings and critical events by discovered session host.
+let Lookback = 24h;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLog:string, EventLevelName:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where EventLevelName in~ ("Error", "Warning", "Critical")
+| summarize Events=count(), LastEvent=max(TimeGenerated) by Computer, EventLog, EventLevelName
+| order by Events desc

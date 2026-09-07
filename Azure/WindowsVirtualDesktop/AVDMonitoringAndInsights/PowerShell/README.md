@@ -77,7 +77,7 @@ Same validation as the host pool script, but for an AVD **workspace**. The basel
 
 ## Test-AVDDCRAssociation.ps1
 
-Checks, for every session host registered to a host pool, that the Azure Monitor Agent (AMA) extension is healthy and that Data Collection Rules (DCRs) actually route Windows Event (`Microsoft-Event`) and Performance (`Microsoft-Perf`) data to the expected workspace. Read-only.
+Checks, for every session host registered to a host pool, that the Azure Monitor Agent (AMA), its VM identity configuration, and Data Collection Rules (DCRs) can support Windows Event (`Microsoft-Event`) and Performance (`Microsoft-Perf`) collection to the expected workspace. Read-only.
 
 - **Parameters**
 
@@ -87,14 +87,15 @@ Checks, for every session host registered to a host pool, that the Azure Monitor
   | `LogAnalyticsWorkspaceResourceId` | Yes | Workspace the DCR destinations are matched against |
 
 - **What it checks, per session host**
+  - Resolves the session host's VM resource ID and reports a failure for a missing or unsupported ID. VMs in other resource groups are supported.
   - AVD agent status, version, and last heartbeat.
-  - `AzureMonitorWindowsAgent` extension present and `Succeeded` (plus automatic-upgrade state).
+  - VM managed identity presence. If the AMA extension explicitly selects a user-assigned identity, verifies that the selected resource ID, client ID, or object ID matches an identity attached to the VM. If no identity is explicitly selected, verifies that a system-assigned identity is available.
+  - `AzureMonitorWindowsAgent` extension present and `Succeeded`, including its automatic-upgrade setting.
   - DCR associations exist (DCE-only associations do not count).
-  - For each associated DCR: XPath queries, performance counter specifiers and sampling interval, data flows, destination match to the expected workspace, and provisioning state.
-  - `ExpectedWorkspaceRoute:Microsoft-Event` / `ExpectedWorkspaceRoute:Microsoft-Perf` — Pass means both a matching data source and a data flow to the expected destination exist.
-  - Warns when a data flow uses a custom `transformKql` (other than `source`), since a transformation may filter records.
-
-  The script resolves each session host's VM resource ID, so hosts whose VMs live in other resource groups are supported.
+  - For each associated DCR: provisioning state, Windows Event XPath queries, performance counter specifiers and sampling interval, data flows, and destination match to the expected workspace.
+  - `ExpectedWorkspaceRoute:Microsoft-Event` / `ExpectedWorkspaceRoute:Microsoft-Perf` — Pass means a matching data source and data flow to the expected destination exist. A route is marked `Error` when a DCR cannot be read and `Fail` when it is readable but no matching route exists.
+  - Reports matching routes with their `transformKql` value and warns when a custom transform other than `source` may filter records.
+  - Reports an empty session-host inventory as `SessionHostInventory:Fail`; ARM/API and unreadable-resource failures are reported as `Error` results.
 
 - **Example**
 

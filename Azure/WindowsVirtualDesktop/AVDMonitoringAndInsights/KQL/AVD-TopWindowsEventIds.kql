@@ -1,0 +1,8 @@
+// Most frequent Windows error/warning/critical event IDs across discovered hosts.
+let Lookback = 24h;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLog:string, EventLevelName:string, EventID:int, Source:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where EventLevelName in~ ("Error", "Warning", "Critical")
+| summarize Count=count(), LastSeen=max(TimeGenerated) by Computer, EventLog, EventID, Source
+| top 30 by Count desc

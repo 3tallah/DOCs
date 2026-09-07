@@ -18,7 +18,7 @@ PowerShell diagnostics, KQL queries and configuration references for Azure Virtu
 | Area | Contents |
 | --- | --- |
 | [Monitoring and Insights](Azure/WindowsVirtualDesktop/AVDMonitoringAndInsights/README.md) | Prerequisites, diagnostics, AMA, managed identities, DCR routes, ingestion tests and a local support bundle |
-| [KQL queries](Azure/WindowsVirtualDesktop/AVDMonitoringAndInsights/KQL/) | Connections, connection-related errors, agent health, network/graphics telemetry, transport, performance, FSLogix events and client versions |
+| [KQL queries](Azure/WindowsVirtualDesktop/AVDMonitoringAndInsights/KQL/) | Connections, connection-related errors, agent health, network/graphics telemetry, transport, performance, FSLogix events and client versions, plus a chart-view (`render`) companion for every query |
 
 For WPNS-AVD, begin with the monitoring guide. Verify Azure configuration, inspect every session host, generate controlled events, exercise a real AVD session, and check ingestion. A visible host in Insights is not evidence that service or guest telemetry is arriving.
 
@@ -39,7 +39,7 @@ These paths remain available. Their presence does not mean the older configurati
 
 ### Modernization roadmap
 
-The consolidated AVDMonitoringAndInsights package contains eight scripts under PowerShell and thirteen queries under KQL. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
+The consolidated AVDMonitoringAndInsights package contains eight scripts under MonitoringAndInsights (five of them also kept under PowerShell for compatibility) and twenty-eight queries under KQL — fifteen base queries plus thirteen chart companions. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
 
 - SessionHost: registration, agent, service and required-endpoint diagnostics.
 - IdentityAndSSO: device join, user-context PRT, cloud Kerberos and AVD Entra SSO.

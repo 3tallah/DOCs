@@ -1,0 +1,12 @@
+// CPU utilization by discovered session host.
+let Lookback = 24h;
+let BinSize = 5m;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, ObjectName:string, CounterName:string, InstanceName:string, CounterValue:real)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| where ObjectName =~ "Processor Information"
+| where CounterName =~ "% Processor Time"
+| where InstanceName == "_Total"
+| summarize AvgCPU=avg(CounterValue), MaxCPU=max(CounterValue) by bin(TimeGenerated, BinSize), Computer
+| order by TimeGenerated asc
+| render timechart with (title="AVD Session Host CPU", ytitle="CPU (%)")

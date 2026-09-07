@@ -1,0 +1,8 @@
+// Ingestion coverage for every host visible in Perf; no host list is required.
+let Lookback = 2h;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, CounterName:string)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| summarize Records=count(), LastSample=max(TimeGenerated), Counters=dcount(CounterName) by Computer
+| extend MinutesSinceLastSample=datetime_diff("minute", now(), LastSample)
+| order by LastSample desc

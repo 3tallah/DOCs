@@ -1,0 +1,13 @@
+// Aggregate physical-disk read/write latency by discovered session host.
+let Lookback = 24h;
+let BinSize = 5m;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, ObjectName:string, CounterName:string, InstanceName:string, CounterValue:real)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| where ObjectName =~ "PhysicalDisk"
+| where InstanceName == "_Total"
+| where CounterName in~ ("Avg. Disk sec/Read", "Avg. Disk sec/Write")
+| extend LatencyMs=CounterValue * 1000
+| summarize AvgLatencyMs=avg(LatencyMs), MaxLatencyMs=max(LatencyMs) by bin(TimeGenerated, BinSize), Computer, CounterName
+| order by TimeGenerated asc
+| render timechart with (title="AVD Disk Latency", ytitle="Latency (ms)")

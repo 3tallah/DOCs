@@ -25,6 +25,25 @@ These queries support the [monitoring and insights guide](../README.md). The Pow
 | [AVD-SessionHostPerformance.kql](AVD-SessionHostPerformance.kql) | Same as AVD-PerformanceCounters | Alternate filename of the same Perf summary |
 | [AVD-FSLogixEvents.kql](AVD-FSLogixEvents.kql) | `Event` | FSLogix profile events from the Admin/Operational channels |
 
+## Cost-optimized host monitoring
+
+These queries discover session hosts from the `Computer` column in `Perf` or `Event`; they do not require a hard-coded host list. They are designed for the DCR created by [Set-AVDCostOptimizedMonitoring.ps1](../MonitoringAndInsights/Set-AVDCostOptimizedMonitoring.ps1), but remain useful with any compatible Event/Perf collection.
+
+| Query | Source table | What it answers |
+| --- | --- | --- |
+| [AVD-PerfIngestionHealth.kql](AVD-PerfIngestionHealth.kql) | `Perf` | Which hosts are sending samples, when each last sampled and how many counters are visible? |
+| [AVD-CPUByHost.kql](AVD-CPUByHost.kql) | `Perf` | What is average and peak total CPU by host over time? |
+| [AVD-MemoryByHost.kql](AVD-MemoryByHost.kql) | `Perf` | What is average and peak committed memory usage by host? |
+| [AVD-AvailableMemoryByHost.kql](AVD-AvailableMemoryByHost.kql) | `Perf` | Which hosts have the lowest available memory? |
+| [AVD-DiskLatencyByHost.kql](AVD-DiskLatencyByHost.kql) | `Perf` | What are aggregate physical-disk read and write latencies by host? |
+| [AVD-ActiveSessionsByHost.kql](AVD-ActiveSessionsByHost.kql) | `Perf` | How many active sessions are running on each host? |
+| [AVD-UserInputDelayByHost.kql](AVD-UserInputDelayByHost.kql) | `Perf` | What user input delay is visible by host? |
+| [AVD-WindowsEventHealthByHost.kql](AVD-WindowsEventHealthByHost.kql) | `Event` | Which hosts and event logs have Error, Warning or Critical events? |
+| [AVD-TopWindowsEventIds.kql](AVD-TopWindowsEventIds.kql) | `Event` | Which event IDs recur most often across hosts? |
+| [AVD-OverallHostHealth.kql](AVD-OverallHostHealth.kql) | `Perf` | What is the compact CPU, memory, session-density and freshness view for every observed host? |
+
+The chart queries use `render timechart` directly and automatically create a series per discovered host. A host appears only when it has matching rows in the selected lookback window. `AVD-UserInputDelayByHost.kql` requires that the DCR collect the optional per-session input-delay counter; the cost-optimized DCR intentionally excludes the higher-cardinality per-process variant.
+
 Every base query also has a `*Chart.kql` companion that renders the same data as a chart — see [Chart companions](#chart-companions).
 
 ## How to use
@@ -148,6 +167,7 @@ Each base query has an `*Chart.kql` companion that renders the same telemetry as
 2. **Agent health** — `AVD-Heartbeat.kql` (AMA) and `AVD-AgentHealth.kql` (AVD agent) to confirm hosts are reporting.
 3. **Exercise a session** — connect a real user session, then review `AVD-Connections.kql`, `AVD-ConnectionFailures.kql`, `AVD-NetworkData.kql`, `AVD-GraphicsData.kql` and `AVD-RDPShortpath.kql`.
 4. **End-to-end test** — run `New-AVDMonitoringTestEvents.ps1` on a host, then use `AVD-SessionHostEvents.kql` with `OnlyValidationEvents = true` and the `RunId` to confirm guest event ingestion.
+5. **Host operations** — start with `AVD-OverallHostHealth.kql`, use `AVD-PerfIngestionHealth.kql` to find missing/stale Perf hosts, then drill into CPU, memory, disk, sessions and Windows event queries as needed.
 
 ## Notes
 

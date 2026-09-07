@@ -1,63 +1,28 @@
-# DOCs
+# AVD Monitoring and Insights
 
-Documentation, scripts and configuration references created for self-learning and knowledge sharing. This repository covers Microsoft Azure, Exchange, Microsoft 365, Enterprise Mobility + Security (EMS), Intune, Citrix, VMware and related technologies.
+Read-only configuration checks, ingestion validation, controlled evidence generation and KQL queries for Azure Virtual Desktop (AVD) monitoring.
 
-## Explore the repository
+## Package layout
 
-- [Azure Firewall](Azure/Azure%20Firewall/)
-- [Azure Sentinel](Azure/Azure%20Sentinel/)
-- [Azure Virtual Desktop (AVD)](Azure/WindowsVirtualDesktop/README.md)
-- [Intune Compliance and Configuration Policies](M365/Intune/IntuneComplianceAndConfigurationPolicies/)
-
-## Azure Virtual Desktop Operations, Configuration and Troubleshooting Toolkit
-
-PowerShell diagnostics, KQL queries and configuration references for Azure Virtual Desktop (AVD). The historical GitHub path, Azure/WindowsVirtualDesktop, is retained so existing links continue to work.
-
-### Start here
-
-| Area | Contents |
+| Folder | Contents |
 | --- | --- |
-| [Monitoring and Insights](Azure/WindowsVirtualDesktop/AVDMonitoringAndInsights/README.md) | Prerequisites, diagnostics, AMA, managed identities, DCR routes, ingestion tests and a local support bundle |
-| [KQL queries](Azure/WindowsVirtualDesktop/AVDMonitoringAndInsights/KQL/) | Connections, connection-related errors, agent health, network/graphics telemetry, transport, performance, FSLogix events and client versions |
+| [MonitoringAndInsights](MonitoringAndInsights/README.md) | The complete, current script set (eight): prerequisites, host pool and AVD Workspace diagnostic settings, DCR/AMA association, per-host monitoring, Log Analytics ingestion, the test-event generator and the local diagnostic bundle collector |
+| [PowerShell](PowerShell/README.md) | Five scripts from the earlier layout, kept for compatibility; MonitoringAndInsights holds the authoritative versions |
+| [KQL](KQL/README.md) | Twenty-eight queries: fifteen base queries plus thirteen chart-view (`render`) companions |
 
-For WPNS-AVD, begin with the monitoring guide. Verify Azure configuration, inspect every session host, generate controlled events, exercise a real AVD session, and check ingestion. A visible host in Insights is not evidence that service or guest telemetry is arriving.
+## Suggested order
 
-The new scripts do not install modules automatically or change execution policy. Test scripts are read-only. The event generator writes two labeled test events; the bundle collector writes local evidence files and can run explicitly requested connectivity probes. Both support -WhatIf.
+For WPNS-AVD, begin with the [monitoring guide](MonitoringAndInsights/README.md). Verify Azure configuration, inspect every session host, generate controlled events, exercise a real AVD session, and check ingestion. A visible host in Insights is not evidence that service or guest telemetry is arriving.
 
-### Existing references
+## Safety notes
 
-These paths remain available. Their presence does not mean the older configuration examples have been revalidated for current production use.
+The scripts do not install modules automatically or change execution policy. Test scripts are read-only. The event generator writes two labeled test events; the bundle collector writes local evidence files and only runs explicitly requested connectivity probes. Both support -WhatIf.
 
-| Existing folder | Subject |
-| --- | --- |
-| [AVDRegistrySettings](Azure/WindowsVirtualDesktop/AVDRegistrySettings/) | Registry samples |
-| [AzureFilesSMBAccessWithWindowsAD](Azure/WindowsVirtualDesktop/AzureFilesSMBAccessWithWindowsAD/) | Historical AD DS/Azure Files setup |
-| [MicrosoftDefenderExclusionsForAVD](Azure/WindowsVirtualDesktop/MicrosoftDefenderExclusionsForAVD/) | Defender exclusion examples |
-| [RDP-ShortPath](Azure/WindowsVirtualDesktop/RDP-ShortPath/) | Existing transport guidance |
-| [WVDCustomURLRedirection](Azure/WindowsVirtualDesktop/WVDCustomURLRedirection/) | Historical URL redirection sample |
-| [WVDVMControl](Azure/WindowsVirtualDesktop/WVDVMControl/) | Historical WVD VM-control sample |
+## Validation status
 
-### Modernization roadmap
+The scripts have been checked locally with PowerShell parsing and simulated dependency responses; they have not been executed against WPNS-AVD, its Log Analytics workspace or an actual session host. The KQL queries, including the chart companions, were reviewed but not run against a live workspace. Run everything first on a test host and review the per-check results.
 
-The consolidated AVDMonitoringAndInsights package contains eight scripts under PowerShell and thirteen queries under KQL. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
-
-- SessionHost: registration, agent, service and required-endpoint diagnostics.
-- IdentityAndSSO: device join, user-context PRT, cloud Kerberos and AVD Entra SSO.
-- FSLogixAndStorage: profile configuration, share access, DNS, Azure Files identity methods and redirections.
-- NetworkingAndRDPShortpath: managed/direct and relayed UDP, current policy guidance and private DNS.
-- SecurityAndHardening: deliberate Defender exclusions, validation and rollback.
-- IntuneAndGPO: documented policy equivalents for the reviewed settings.
-- Operations: sessions, drain mode, utilization and capacity.
-- Troubleshooting: symptom-led runbooks with concrete evidence and recovery steps.
-- RegistrySettings and Legacy: reviewed migration of existing samples with compatibility links.
-
-Registry exports and legacy tools have not been moved or rewritten in this phase. Future migrations should document each setting and keep existing links usable.
-
-### Validation status
-
-The additions have been checked locally with PowerShell parsing and simulated dependency responses. They have not been executed against WPNS-AVD, its Log Analytics workspace or an actual session host. Run them first on a test host and review their per-check results.
-
-### References
+## References
 
 - [AVD Insights setup](https://learn.microsoft.com/en-us/azure/virtual-desktop/insights)
 - [Azure Monitor Agent requirements](https://learn.microsoft.com/en-us/azure/azure-monitor/agents/azure-monitor-agent-requirements)

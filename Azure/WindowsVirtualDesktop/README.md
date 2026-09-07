@@ -7,7 +7,7 @@ PowerShell diagnostics, KQL queries and configuration references for Azure Virtu
 | Area | Contents |
 | --- | --- |
 | [Monitoring and Insights](AVDMonitoringAndInsights/README.md) | Prerequisites, diagnostics, AMA, managed identities, DCR routes, ingestion tests and a local support bundle |
-| [KQL queries](AVDMonitoringAndInsights/KQL/) | Connections, connection-related errors, agent health, network/graphics telemetry, transport, performance, FSLogix events and client versions |
+| [KQL queries](AVDMonitoringAndInsights/KQL/) | Connections, connection-related errors, agent health, network/graphics telemetry, transport, performance, FSLogix events and client versions, plus a chart-view (`render`) companion for every query |
 
 For WPNS-AVD, begin with the monitoring guide. Verify Azure configuration, inspect every session host, generate controlled events, exercise a real AVD session, and check ingestion. A visible host in Insights is not evidence that service or guest telemetry is arriving.
 
@@ -28,7 +28,7 @@ These paths remain available. Their presence does not mean the older configurati
 
 ## Modernization roadmap
 
-The consolidated AVDMonitoringAndInsights package contains eight scripts under PowerShell and thirteen queries under KQL. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
+The consolidated AVDMonitoringAndInsights package contains eight scripts under MonitoringAndInsights (five of them also kept under PowerShell for compatibility) and twenty-eight queries under KQL — fifteen base queries plus thirteen chart companions. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
 
 - SessionHost: registration, agent, service and required-endpoint diagnostics.
 - IdentityAndSSO: device join, user-context PRT, cloud Kerberos and AVD Entra SSO.
@@ -44,7 +44,7 @@ Registry exports and legacy tools have not been moved or rewritten in this phase
 
 ## Validation status
 
-The additions have been checked locally with PowerShell parsing and simulated dependency responses. They have not been executed against WPNS-AVD, its Log Analytics workspace or an actual session host. Run them first on a test host and review their per-check results.
+The additions have been checked locally with PowerShell parsing and simulated dependency responses. They have not been executed against WPNS-AVD, its Log Analytics workspace or an actual session host. The KQL queries, including the chart companions, were reviewed but not run against a live workspace. Run them first on a test host and review their per-check results.
 
 ## References
 

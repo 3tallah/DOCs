@@ -1,0 +1,20 @@
+// Primary dynamic host view for cost-optimized Perf ingestion.
+let Lookback = 2h;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, ObjectName:string, CounterName:string, InstanceName:string, CounterValue:real)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| summarize
+    Samples=count(),
+    LastSample=max(TimeGenerated),
+    CPU=avgif(CounterValue, ObjectName =~ "Processor Information" and CounterName =~ "% Processor Time" and InstanceName == "_Total"),
+    MemoryUsed=avgif(CounterValue, ObjectName =~ "Memory" and CounterName =~ "% Committed Bytes In Use"),
+    AvailableMemoryMB=minif(CounterValue, ObjectName =~ "Memory" and CounterName =~ "Available MBytes"),
+    ActiveSessions=maxif(CounterValue, ObjectName =~ "Terminal Services" and CounterName =~ "Active Sessions")
+    by Computer
+| extend LastSeenMinutesAgo=datetime_diff("minute", now(), LastSample)
+| project Computer, LastSample, LastSeenMinutesAgo,
+    CPU=round(CPU, 1),
+    MemoryUsed=round(MemoryUsed, 1),
+    AvailableMemoryMB=round(AvailableMemoryMB, 0),
+    ActiveSessions, Samples
+| order by Computer asc
