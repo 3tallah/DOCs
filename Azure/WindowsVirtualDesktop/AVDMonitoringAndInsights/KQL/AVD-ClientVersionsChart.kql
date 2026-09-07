@@ -1,0 +1,16 @@
+// Chart view of client versions: connections per client type/OS/version over 7 days.
+// Companion to AVD-ClientVersions.kql; observed connecting clients, not installed inventory.
+// For a piechart of the same aggregation, replace the render line with:
+//   render piechart with (title="Connections by client version")
+let Lookback = 7d;
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ ClientType:string, ClientOS:string, ClientVersion:string)[]), WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(CorrelationId) and isnotempty(ClientVersion)
+| summarize arg_max(TimeGenerated, ClientType, ClientOS, ClientVersion) by _ResourceId, CorrelationId
+| summarize Connections=count() by Client=strcat(ClientType, " / ", ClientOS, " / ", ClientVersion)
+| order by Connections desc
+| render columnchart with (title="Connections by client version", xtitle="Client type / OS / version", ytitle="Connections")

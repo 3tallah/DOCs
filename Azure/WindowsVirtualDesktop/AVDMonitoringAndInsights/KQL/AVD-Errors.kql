@@ -1,0 +1,14 @@
+// Service-generated diagnostic errors; not local Windows Event log errors.
+// No error rows can be normal and does not prove that collection is enabled.
+let Lookback = 48h;
+let ResourceId = ""; // Optional host pool OR AVD Workspace ARM ID.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ ActivityType:string, Code:long, CodeSymbolic:string, Message:string, ServiceError:bool)[]),
+ WVDErrors
+| where TimeGenerated > ago(Lookback)
+| where isempty(ResourceId) or _ResourceId =~ ResourceId
+| project TimeGenerated, ActivityType, Code, CodeSymbolic, Message, ServiceError, CorrelationId, _ResourceId
+| order by TimeGenerated desc
+| take 1000
+

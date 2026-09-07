@@ -1,0 +1,14 @@
+// Each counter/instance remains separate: units differ and must not be averaged together.
+// Report ingestion and values; compare with the DCR counter list and expected host inventory.
+let Lookback = 2h;
+let ComputerFilter = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, ObjectName:string, CounterName:string,
+ InstanceName:string, CounterValue:real, _ResourceId:string)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| summarize Records=count(), LastSample=max(TimeGenerated), Average=avg(CounterValue),
+    Minimum=min(CounterValue), Maximum=max(CounterValue)
+    by _ResourceId, Computer, ObjectName, CounterName, InstanceName
+| order by Computer asc, ObjectName asc, CounterName asc, InstanceName asc
+

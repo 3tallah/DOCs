@@ -1,0 +1,18 @@
+// Inspect lifecycle rows in time order. A connection can emit multiple rows.
+// PredecessorConnectionId identifies auto-reconnects, not every manual reconnect.
+// To validate a manual reconnect, correlate user, host and the recorded test times.
+let Lookback = 48h;
+let HostPoolResourceId = ""; // Optional full host pool ARM ID.
+let UserFilter = ""; // Optional exact UPN.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, UserName:string, SessionHostName:string,
+ CorrelationId:string, State:string, PredecessorConnectionId:string, TransportType:string)[]),
+ WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isempty(UserFilter) or UserName =~ UserFilter
+| project TimeGenerated, UserName, SessionHostName, State, CorrelationId,
+    PredecessorConnectionId, IsAutoReconnect=isnotempty(PredecessorConnectionId), TransportType, _ResourceId
+| order by TimeGenerated desc
+| take 1000
+

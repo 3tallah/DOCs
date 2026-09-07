@@ -1,0 +1,12 @@
+WVDConnectionNetworkData
+| where TimeGenerated > ago(48h)
+| summarize
+    AvgRTT = avg(EstRoundTripTimeInMs),
+    P95RTT = percentile(EstRoundTripTimeInMs, 95)
+    by bin(TimeGenerated, 5m)
+| order by TimeGenerated asc
+| render timechart with (
+    title = "AVD Connection Network Quality",
+    xtitle = "Time",
+    ytitle = "RTT (ms)"
+)

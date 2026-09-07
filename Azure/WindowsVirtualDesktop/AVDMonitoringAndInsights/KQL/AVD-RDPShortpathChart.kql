@@ -1,0 +1,15 @@
+// Chart view of observed transport: distinct connections per TransportType per bin.
+// Companion to AVD-RDPShortpath.kql; "Shortpath" does not distinguish managed-network
+// UDP from STUN-assisted direct UDP, and this is observed transport, not a connectivity test.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string, TransportType:string)[]),
+ WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(TransportType)
+| summarize Connections=dcount(CorrelationId) by TransportType, bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Connections by transport", xtitle="Time (UTC)", ytitle="Distinct connections")

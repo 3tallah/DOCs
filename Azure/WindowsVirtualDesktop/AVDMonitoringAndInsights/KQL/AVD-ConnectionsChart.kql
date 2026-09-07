@@ -1,0 +1,16 @@
+// Chart view of connection volume: distinct CorrelationIds with activity per bin.
+// Companion to AVD-Connections.kql, which lists lifecycle rows in time order.
+// A connection emitting rows across several bins counts in each bin; this is activity,
+// not a sign-in count. For a per-transport breakdown use AVD-RDPShortpathChart.kql.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string, TransportType:string)[]),
+ WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(CorrelationId)
+| summarize Connections=dcount(CorrelationId) by bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Connections with activity", xtitle="Time (UTC)", ytitle="Distinct connections")

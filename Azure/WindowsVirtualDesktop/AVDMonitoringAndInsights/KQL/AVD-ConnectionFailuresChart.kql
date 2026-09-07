@@ -1,0 +1,22 @@
+// Chart view of connection-related errors: rows per CodeSymbolic per bin.
+// Companion to AVD-ConnectionFailures.kql; an error row is not proof of a failed sign-in.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let HostPoolResourceId = "";
+let Connections = union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string, State:string)[]),
+ WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| summarize States=make_set(State) by _ResourceId, CorrelationId;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ ActivityType:string, CodeSymbolic:string)[]),
+ WVDErrors
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| join kind=leftouter Connections on _ResourceId, CorrelationId
+| where ActivityType =~ "Connection" or isnotempty(tostring(States))
+| summarize Errors=count() by CodeSymbolic=iff(isempty(CodeSymbolic), "(no code)", CodeSymbolic), bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Connection-related errors by code", xtitle="Time (UTC)", ytitle="Error rows per bin")

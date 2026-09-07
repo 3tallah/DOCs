@@ -1,0 +1,13 @@
+// Chart view of service diagnostic errors: rows per CodeSymbolic per bin.
+// Companion to AVD-Errors.kql; zero rows can be normal and does not prove collection is enabled.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let ResourceId = ""; // Optional host pool OR AVD Workspace ARM ID.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, ActivityType:string, CodeSymbolic:string)[]),
+ WVDErrors
+| where TimeGenerated > ago(Lookback)
+| where isempty(ResourceId) or _ResourceId =~ ResourceId
+| summarize Errors=count() by CodeSymbolic=iff(isempty(CodeSymbolic), "(no code)", CodeSymbolic), bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Service errors by code", xtitle="Time (UTC)", ytitle="Error rows per bin")

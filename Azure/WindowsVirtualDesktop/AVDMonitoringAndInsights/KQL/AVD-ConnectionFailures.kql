@@ -1,0 +1,21 @@
+// Connection-related AVD errors, including errors that occurred after connection.
+// An error row is not proof of a failed sign-in; inspect Message and the connection timeline.
+let Lookback = 48h;
+let HostPoolResourceId = "";
+let Connections = union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string, UserName:string, SessionHostName:string, State:string)[]),
+ WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| summarize arg_max(TimeGenerated, UserName, SessionHostName), States=make_set(State) by _ResourceId, CorrelationId
+| project _ResourceId, CorrelationId, UserName, SessionHostName, States;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string, ActivityType:string, Code:long, CodeSymbolic:string, Message:string, ServiceError:bool)[]),
+ WVDErrors
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| join kind=leftouter Connections on _ResourceId, CorrelationId
+| where ActivityType =~ "Connection" or isnotempty(tostring(States))
+| project TimeGenerated, UserName, SessionHostName, ActivityType, Code, CodeSymbolic, Message, ServiceError, CorrelationId, States, _ResourceId
+| order by TimeGenerated desc
+| take 1000

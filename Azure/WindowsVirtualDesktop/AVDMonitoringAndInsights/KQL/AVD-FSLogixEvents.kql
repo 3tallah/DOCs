@@ -1,0 +1,14 @@
+// Requires the DCR to collect these channels/providers into Event.
+// Empty results can mean no activity, excluded channels, or missing collection.
+let Lookback = 48h;
+let ComputerFilter = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLog:string, Source:string,
+ EventID:int, EventLevelName:string, RenderedDescription:string, _ResourceId:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| where EventLog in~ ("Microsoft-FSLogix-Apps/Admin", "Microsoft-FSLogix-Apps/Operational")
+    or Source contains "FSLogix"
+| project TimeGenerated, Computer, EventLog, Source, EventID, EventLevelName, RenderedDescription, _ResourceId
+| order by TimeGenerated desc
+| take 1000

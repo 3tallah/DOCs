@@ -1,0 +1,14 @@
+// Chart view of AMA coverage: distinct computers with an Azure Monitor Agent heartbeat per bin.
+// Companion to AVD-Heartbeat.kql, which classifies each host as Recent/Stale/Missing.
+// Dips can mean stopped/deallocated hosts or ingestion delay, not necessarily agent failure.
+// Hosts that never reported do not appear here; use ExpectedVMs in the table query to find them.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, Category:string, _ResourceId:string)[]),
+ Heartbeat
+| where TimeGenerated > ago(Lookback)
+| where Category == "Azure Monitor Agent"
+| summarize Hosts=dcount(Computer) by bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="AMA heartbeat: distinct hosts reporting", xtitle="Time (UTC)", ytitle="Distinct hosts")

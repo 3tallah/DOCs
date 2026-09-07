@@ -1,0 +1,21 @@
+// Chart view of graphics pipeline delays: per-bin averages, in milliseconds.
+// Companion to AVD-GraphicsData.kql; preview telemetry requires eligible client/session
+// activity, so empty periods do not by themselves prove a problem.
+// Skipped-frame percentages use different units (%): chart them with a separate copy of
+// this query using the ServerSkippedFramesPercentage/NetworkSkippedFramesPercentage/
+// ClientSkippedFramesPercentage columns instead.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ EndToEndDelayInMs:int, EncodingDelayOnServerInMs:int, DecodingTimeOnClientInMs:int,
+ RenderingTimeOnClientInMs:int)[],
+ WVDConnectionGraphicsDataPreview
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| summarize AvgEndToEndMs=avg(EndToEndDelayInMs), AvgEncodingMs=avg(EncodingDelayOnServerInMs),
+    AvgDecodingMs=avg(DecodingTimeOnClientInMs), AvgRenderingMs=avg(RenderingTimeOnClientInMs)
+    by bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Graphics delays: average per connection", xtitle="Time (UTC)", ytitle="Milliseconds")

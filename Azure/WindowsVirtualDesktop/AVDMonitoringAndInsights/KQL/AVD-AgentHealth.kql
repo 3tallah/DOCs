@@ -1,0 +1,14 @@
+// Latest observed AVD agent report; this is separate from AMA Heartbeat.
+// Missing hosts cannot be discovered from this table alone: compare with the Azure inventory.
+let Lookback = 48h;
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, SessionHostName:string,
+ Status:string, AgentVersion:string, LastHeartBeat:datetime, SessionHostHealthCheckResult:dynamic)[]),
+ WVDAgentHealthStatus
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| summarize arg_max(TimeGenerated, *) by _ResourceId, SessionHostName
+| project TimeGenerated, SessionHostName, Status, AgentVersion, LastHeartBeat,
+    ReportAge=now()-TimeGenerated, SessionHostHealthCheckResult, _ResourceId
+| order by SessionHostName asc

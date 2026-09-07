@@ -1,0 +1,25 @@
+// Run in the target Log Analytics workspace. Repeat in the guest workspace if different.
+// Zero means no rows visible in this time range, including tables not yet created.
+// Fuzzy union warnings for absent optional tables are expected; access/runtime errors still matter.
+let Lookback = 48h;
+let Expected = datatable(TableName:string)
+[
+ "WVDConnections", "WVDCheckpoints", "WVDErrors", "WVDFeeds", "WVDManagement",
+ "WVDHostRegistrations", "WVDAgentHealthStatus", "WVDConnectionNetworkData",
+ "WVDConnectionGraphicsDataPreview", "WVDSessionHostManagement", "WVDMultiLinkAdd",
+ "Event", "Perf", "Heartbeat"
+];
+let Observed = union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Type:string)[]),
+ WVDConnections, WVDCheckpoints, WVDErrors, WVDFeeds, WVDManagement,
+ WVDHostRegistrations, WVDAgentHealthStatus, WVDConnectionNetworkData,
+ WVDConnectionGraphicsDataPreview, WVDSessionHostManagement, WVDMultiLinkAdd,
+ Event, Perf, Heartbeat
+| where TimeGenerated > ago(Lookback)
+| summarize Records=count(), LastRecord=max(TimeGenerated) by TableName=Type;
+Expected
+| join kind=leftouter Observed on TableName
+| project TableName, Records=coalesce(Records, tolong(0)), LastRecord,
+    Observation=iff(isnull(LastRecord), "No data in window / table absent", "Receiving data")
+| order by TableName asc
+

@@ -1,0 +1,23 @@
+// Active sessions generate this telemetry. Network rows have no host/user/transport fields;
+// enrich from one connection row per resource + CorrelationId to avoid multiplying samples.
+// Bandwidth units are KB/s (kilobytes per second), RTT is milliseconds.
+let Lookback = 48h;
+let HostPoolResourceId = "";
+let Connections = union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ SessionHostName:string, UserName:string, TransportType:string)[]), WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| summarize arg_max(TimeGenerated, SessionHostName, UserName, TransportType) by _ResourceId, CorrelationId
+| project _ResourceId, CorrelationId, SessionHostName, UserName, TransportType;
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ EstRoundTripTimeInMs:int, EstAvailableBandwidthKBps:int)[]), WVDConnectionNetworkData
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| join kind=leftouter Connections on _ResourceId, CorrelationId
+| project TimeGenerated, SessionHostName, UserName, CorrelationId,
+    RTTms=EstRoundTripTimeInMs, BandwidthKBps=EstAvailableBandwidthKBps, TransportType, _ResourceId
+| order by TimeGenerated desc
+| take 1000
+

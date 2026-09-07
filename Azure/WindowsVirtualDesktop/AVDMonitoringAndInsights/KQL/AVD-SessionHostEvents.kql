@@ -1,0 +1,17 @@
+// Set OnlyValidationEvents=true and paste RunId to verify the two generated events.
+// Leave false to review all collected host events. ComputerFilter accepts a short name or FQDN.
+let Lookback = 48h;
+let ComputerFilter = "";
+let OnlyValidationEvents = false;
+let RunId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLog:string, Source:string,
+ EventLevelName:string, EventID:int, RenderedDescription:string, _ResourceId:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| where not(OnlyValidationEvents) or (Source == "AVD-Monitoring-Validation" and EventID in (9001,9002))
+| where isempty(RunId) or RenderedDescription contains RunId
+| project TimeGenerated, Computer, EventLog, Source, EventLevelName, EventID, RenderedDescription, _ResourceId
+| order by TimeGenerated desc
+| take 1000
+

@@ -1,0 +1,17 @@
+// Chart view of table ingestion: records per table over time (render timechart).
+// Companion to AVD-AllTables.kql, which reports per-table totals including absent tables.
+// Absent tables have no rows and therefore no series here; use the table query for the full matrix.
+// For a stacked column view, replace the render line with:
+//   render columnchart with (kind=stacked, title="Ingestion: records per table", xtitle="Time (UTC)", ytitle="Records per bin")
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Type:string)[]),
+ WVDConnections, WVDCheckpoints, WVDErrors, WVDFeeds, WVDManagement,
+ WVDHostRegistrations, WVDAgentHealthStatus, WVDConnectionNetworkData,
+ WVDConnectionGraphicsDataPreview, WVDSessionHostManagement, WVDMultiLinkAdd,
+ Event, Perf, Heartbeat
+| where TimeGenerated > ago(Lookback)
+| summarize Records=count() by Type, bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Ingestion: records per table", xtitle="Time (UTC)", ytitle="Records per bin")

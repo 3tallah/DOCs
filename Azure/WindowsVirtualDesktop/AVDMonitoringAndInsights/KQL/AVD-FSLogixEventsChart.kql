@@ -1,0 +1,16 @@
+// Chart view of FSLogix event volume: rows per Event ID per bin.
+// Companion to AVD-FSLogixEvents.kql; requires the DCR to collect the FSLogix channels.
+// Empty periods can mean no profile activity, excluded channels, or missing collection.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let ComputerFilter = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLog:string, Source:string,
+ EventID:int, RenderedDescription:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| where EventLog in~ ("Microsoft-FSLogix-Apps/Admin", "Microsoft-FSLogix-Apps/Operational")
+    or Source contains "FSLogix"
+| summarize Events=count() by EventID=strcat("EventID ", tostring(EventID)), bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="FSLogix events by Event ID", xtitle="Time (UTC)", ytitle="Events per bin")

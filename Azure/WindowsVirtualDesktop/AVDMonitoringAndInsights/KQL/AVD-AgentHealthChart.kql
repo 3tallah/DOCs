@@ -1,0 +1,20 @@
+// Chart view of AVD agent health: distinct session hosts per reported Status over time.
+// Companion to AVD-AgentHealth.kql, which lists the latest report per host.
+// This is the AVD agent report, separate from AMA Heartbeat; a gap in all series can
+// simply mean hosts were stopped/deallocated - compare with the Azure inventory.
+// A host reporting different statuses within one bin is counted once in each status.
+// For a stacked column view, replace the render line with:
+//   render columnchart with (kind=stacked, title="AVD agent health: hosts by status", xtitle="Time (UTC)", ytitle="Distinct hosts reporting")
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, SessionHostName:string,
+ Status:string)[]),
+ WVDAgentHealthStatus
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(Status)
+| summarize Hosts=dcount(SessionHostName) by Status, bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="AVD agent health: hosts by status", xtitle="Time (UTC)", ytitle="Distinct hosts reporting")

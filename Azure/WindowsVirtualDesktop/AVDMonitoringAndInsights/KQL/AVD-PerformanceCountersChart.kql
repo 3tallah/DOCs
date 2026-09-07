@@ -1,0 +1,21 @@
+// Chart view of one performance counter over time: one series per host/instance.
+// Companion to AVD-PerformanceCounters.kql, which summarizes all counters per host.
+// Defaults chart Processor Information(_Total)\% Processor Time; set the three filters
+// below to any collected counter (keep one counter per chart - units differ).
+// Update the render title to match the chosen counter.
+let Lookback = 2h;
+let BinSize = 5m;
+let ComputerFilter = "";
+let ObjectFilter = "Processor Information";
+let CounterFilter = "% Processor Time";
+let InstanceFilter = "_Total"; // Use "" to include all instances.
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, ObjectName:string, CounterName:string,
+ InstanceName:string, CounterValue:real, _ResourceId:string)[]), Perf
+| where TimeGenerated > ago(Lookback)
+| where ObjectName =~ ObjectFilter and CounterName =~ CounterFilter
+| where isempty(InstanceFilter) or InstanceName =~ InstanceFilter
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| summarize AvgValue=avg(CounterValue) by Host=strcat(Computer, "/", InstanceName), bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Performance counter average over time", xtitle="Time (UTC)", ytitle="Average value")

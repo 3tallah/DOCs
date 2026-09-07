@@ -1,0 +1,18 @@
+// Preview graphics telemetry depends on eligible client/session activity and diagnostics.
+// Missing rows are not by themselves proof of failure.
+let Lookback = 48h;
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ EndToEndDelayInMs:int, EncodingDelayOnServerInMs:int, DecodingTimeOnClientInMs:int,
+ RenderingTimeOnClientInMs:int, ServerSkippedFramesPercentage:int,
+ NetworkSkippedFramesPercentage:int, ClientSkippedFramesPercentage:int)[]),
+ WVDConnectionGraphicsDataPreview
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| project TimeGenerated, CorrelationId, EndToEndDelayInMs, EncodingDelayOnServerInMs,
+ DecodingTimeOnClientInMs, RenderingTimeOnClientInMs, ServerSkippedFramesPercentage,
+ NetworkSkippedFramesPercentage, ClientSkippedFramesPercentage, _ResourceId
+| order by TimeGenerated desc
+| take 1000
+

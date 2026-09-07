@@ -1,0 +1,18 @@
+// Observed service-reported transport, not configuration or a standalone connectivity test.
+// "Shortpath" alone does not distinguish managed-network UDP from STUN-assisted direct UDP.
+let Lookback = 48h;
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ UserName:string, SessionHostName:string, TransportType:string)[]), WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(TransportType)
+| summarize arg_max(TimeGenerated, *) by _ResourceId, CorrelationId
+| project TimeGenerated, UserName, SessionHostName, CorrelationId, TransportType,
+ Interpretation=case(TransportType =~ "Shortpath", "Direct UDP; managed versus STUN not identified here",
+                     TransportType =~ "TURN", "Relayed UDP observed",
+                     TransportType =~ "Websocket", "WebSocket transport observed",
+                     "Review reported transport"), _ResourceId
+| order by TimeGenerated desc
+| take 1000

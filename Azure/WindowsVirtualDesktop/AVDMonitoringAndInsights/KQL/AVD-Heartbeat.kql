@@ -1,0 +1,25 @@
+// Populate ExpectedVMs with every session host ARM VM ID to detect never-seen hosts.
+// With an empty list, only hosts observed during Lookback are shown.
+// A stale heartbeat may reflect a stopped/deallocated VM or ingestion delay.
+let Lookback = 48h;
+let StaleAfter = 15m;
+let ExpectedVMs = datatable(VMResourceId:string)
+[
+ // "/subscriptions/<id>/resourceGroups/<rg>/providers/Microsoft.Compute/virtualMachines/<vm>"
+];
+let Observed = union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, Category:string, Version:string, _ResourceId:string)[]), Heartbeat
+| where TimeGenerated > ago(Lookback)
+| where Category == "Azure Monitor Agent"
+| extend VMResourceId=tolower(_ResourceId)
+| summarize arg_max(TimeGenerated, Computer, Version) by VMResourceId;
+union
+ (ExpectedVMs | project VMResourceId=tolower(VMResourceId)),
+ (Observed | project VMResourceId)
+| distinct VMResourceId
+| join kind=leftouter Observed on VMResourceId
+| project VMResourceId, Computer, LastHeartbeat=TimeGenerated, Version,
+    Age=now()-TimeGenerated,
+    Status=case(isnull(TimeGenerated), "Missing in window", TimeGenerated < ago(StaleAfter), "Stale", "Recent")
+| order by Status asc, Computer asc
+

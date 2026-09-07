@@ -1,0 +1,13 @@
+// Latest nonempty client-version observation per correlation, then count connection IDs.
+// This describes observed connecting clients, not an installed-device software inventory.
+let Lookback = 7d;
+let HostPoolResourceId = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, _ResourceId:string, CorrelationId:string,
+ ClientType:string, ClientOS:string, ClientVersion:string)[]), WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where isempty(HostPoolResourceId) or _ResourceId =~ HostPoolResourceId
+| where isnotempty(CorrelationId) and isnotempty(ClientVersion)
+| summarize arg_max(TimeGenerated, ClientType, ClientOS, ClientVersion) by _ResourceId, CorrelationId
+| summarize Connections=count(), LastSeen=max(TimeGenerated) by _ResourceId, ClientType, ClientOS, ClientVersion
+| order by Connections desc

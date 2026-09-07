@@ -1,0 +1,13 @@
+// Chart view of host event volume: rows per EventLevelName per bin.
+// Companion to AVD-SessionHostEvents.kql, which lists rows and verifies validation events.
+// Volume only: a quiet log is not proof of health or of missing collection.
+let Lookback = 48h;
+let BinSize = 1h; // Widen (6h, 1d) for long windows; narrow (5m, 15m) for short ones.
+let ComputerFilter = "";
+union isfuzzy=true
+ (datatable(TimeGenerated:datetime, Computer:string, EventLevelName:string)[]), Event
+| where TimeGenerated > ago(Lookback)
+| where isempty(ComputerFilter) or Computer =~ ComputerFilter or tostring(split(Computer, ".")[0]) =~ ComputerFilter
+| summarize Events=count() by EventLevelName=iff(isempty(EventLevelName), "(none)", EventLevelName), bin(TimeGenerated, BinSize)
+| order by TimeGenerated asc
+| render timechart with (title="Host events by level", xtitle="Time (UTC)", ytitle="Events per bin")
