@@ -1,6 +1,6 @@
 # AVD Monitoring and Insights — PowerShell Scripts
 
-PowerShell scripts that validate the Azure-side and guest-side configuration needed for Azure Virtual Desktop (AVD) monitoring with Azure Monitor and AVD Insights. Four scripts are **read-only** diagnostics; one generates two **controlled, labeled test events** for end-to-end ingestion validation.
+PowerShell scripts that validate the Azure-side and guest-side configuration needed for Azure Virtual Desktop (AVD) monitoring with Azure Monitor and AVD Insights. Four scripts are **read-only** diagnostics; one generates two **controlled, labeled test events** for end-to-end ingestion validation. A sixth script is an **interactive single-pass console report** combining the common host checks for manual runs.
 
 These scripts support the [monitoring and insights guide](../README.md). Companion KQL queries for verifying ingestion live in the [KQL folder](../KQL/).
 
@@ -12,6 +12,7 @@ These scripts support the [monitoring and insights guide](../README.md). Compani
 | [Test-AVDWorkspaceDiagnosticSettings.ps1](Test-AVDWorkspaceDiagnosticSettings.ps1) | Azure (any machine signed in to Azure) | Read-only validation |
 | [Test-AVDDCRAssociation.ps1](Test-AVDDCRAssociation.ps1) | Azure (any machine signed in to Azure) | Read-only validation |
 | [Test-AVDSessionHostMonitoring.ps1](Test-AVDSessionHostMonitoring.ps1) | Locally on each session host (elevated) | Read-only validation |
+| [Validate-AVDSessionHostMonitoring-Interactive.ps1](Validate-AVDSessionHostMonitoring-Interactive.ps1) | Locally on a session host (elevated) | Interactive console report; writes two labeled test events |
 | [New-AVDMonitoringTestEvents.ps1](New-AVDMonitoringTestEvents.ps1) | Locally on a chosen session host (elevated Windows PowerShell 5.1) | Writes two test events |
 
 ## Prerequisites

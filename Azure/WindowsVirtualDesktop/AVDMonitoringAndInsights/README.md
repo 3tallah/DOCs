@@ -7,7 +7,7 @@ Read-only configuration checks, ingestion validation, controlled evidence genera
 | Folder | Contents |
 | --- | --- |
 | [MonitoringAndInsights](MonitoringAndInsights/README.md) | The complete, current script set (eight): prerequisites, host pool and AVD Workspace diagnostic settings, DCR/AMA association, per-host monitoring, Log Analytics ingestion, the test-event generator and the local diagnostic bundle collector |
-| [PowerShell](PowerShell/README.md) | Five scripts from the earlier layout, kept for compatibility; MonitoringAndInsights holds the authoritative versions |
+| [PowerShell](PowerShell/README.md) | Six scripts from the earlier layout, kept for compatibility, including the interactive single-pass host validation report; MonitoringAndInsights holds the authoritative versions |
 | [KQL](KQL/README.md) | Twenty-eight queries: fifteen base queries plus thirteen chart-view (`render`) companions |
 
 ## Suggested order
