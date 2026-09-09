@@ -31,6 +31,14 @@ AVD Agent health is distinct from AMA health. Guest data and service diagnostics
 | [Invoke-AVDSessionHostReport.ps1](Invoke-AVDSessionHostReport.ps1) | Admin workstation/Cloud Shell | Fans the host validation out to every registered session host via Run Command and merges all reports into one summary + CSV |
 | [Invoke-AVDMonitoringReportUpload.ps1](Invoke-AVDMonitoringReportUpload.ps1) | Injected into each session host (not run directly) | Runs the validation and PUTs the JSON report to a write-only blob SAS URL |
 
+## Documentation in this folder
+
+| File | Purpose |
+| --- | --- |
+| [README.md](README.md) | This guide — architecture, full script set, prerequisites, step-by-step monitoring workflow and KQL index |
+| [Collect-AVDDiagnosticBundle.README.md](Collect-AVDDiagnosticBundle.README.md) | Dedicated guide to the diagnostic bundle: what it collects, full parameter reference, output layout, and how to read `Report.html` / `manifest.json` |
+| [LEGACY-PowerShell-README.md](LEGACY-PowerShell-README.md) | Reference copy of the earlier `PowerShell/` folder README, kept only for historical links; the scripts it described now live here |
+
 The scripts are directly in this folder, including the interactive single-pass host report `Validate-AVDSessionHostMonitoring-Interactive.ps1`. Shared queries live in [../KQL](../KQL/). The earlier PowerShell folder has been merged into this one; `LEGACY-PowerShell-README.md` is kept only for reference.
 
 ## Collect a report from every session host at once
