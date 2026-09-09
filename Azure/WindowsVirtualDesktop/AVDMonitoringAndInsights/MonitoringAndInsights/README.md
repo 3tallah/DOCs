@@ -19,7 +19,7 @@ AVD Agent health is distinct from AMA health. Guest data and service diagnostics
 | File | Runs on | Purpose |
 | --- | --- | --- |
 | [Test-AVDMonitoringPrerequisites.ps1](Test-AVDMonitoringPrerequisites.ps1) | Admin workstation/Cloud Shell | Modules, Azure context and resource read access |
-| [Test-AVDHostPoolDiagnosticSettings.ps1](Test-AVDHostPoolDiagnosticSettings.ps1) | Admin workstation/Cloud Shell | allLogs, available categories and expected destination |
+| [Test-AVDHostPoolDiagnosticSettings.ps1](Test-AVDHostPoolDiagnosticSettings.ps1) | Admin workstation/Cloud Shell | Host pool categories, settings, expected destination and per-category coverage |
 | [Test-AVDWorkspaceDiagnosticSettings.ps1](Test-AVDWorkspaceDiagnosticSettings.ps1) | Admin workstation/Cloud Shell | AVD Workspace diagnostic coverage |
 | [Test-AVDDCRAssociation.ps1](Test-AVDDCRAssociation.ps1) | Admin workstation/Cloud Shell | Every registered VM's AMA extension, identity selection and DCR routes |
 | [Set-AVDCostOptimizedMonitoring.ps1](Set-AVDCostOptimizedMonitoring.ps1) | Admin workstation/Cloud Shell | Creates/updates one cost-optimized DCR and associates it with every registered session-host VM |
@@ -98,22 +98,57 @@ $lawId = "$baseId/providers/Microsoft.OperationalInsights/workspaces/LAW-WPNS-AV
 
 Diagnostic coverage is combined across settings targeting the expected workspace. Settings pointing elsewhere do not satisfy it. allLogs is preferred for full category coverage; its absence warns even if explicit categories cover the baseline. New/optional category gaps warn. Available baseline gaps fail.
 
+`Test-AVDHostPoolDiagnosticSettings.ps1` validates the AVD platform diagnostic path only. It lists the categories advertised by the host pool, lists every diagnostic setting and its enabled logs, checks whether a setting targets the expected Log Analytics workspace, and emits one result for every available category. A category passes when it is covered at the expected destination by `allLogs`, an explicit category, or a matching category group. An uncovered advertised baseline category fails; an uncovered non-baseline category warns. This does not validate AMA, DCR associations, Windows events or performance counters; use `Test-AVDDCRAssociation.ps1` for that guest telemetry path.
+
 The DCR check uses each registered host's VM resourceId and follows inventory pagination. An endpoint-only (DCE) association does not satisfy a DCR requirement. It checks AMA identity selection against system-assigned or attached user-assigned identity configuration.
 
 Event and Perf need sources and routes to the expected destination. Sources may be split across DCRs. Review emitted XPath expressions, counter lists, intervals, provisioning state and transforms: a route Pass does not prove complete baseline coverage or ingestion. A route only to InsightsMetrics does not satisfy Perf.
 
 ## 2. Inspect hosts and generate events
 
-On each session host:
+### Inspect the local host
+
+Run the read-only host check first:
 
 ~~~powershell
 .\Test-AVDSessionHostMonitoring.ps1 | Format-Table -Wrap
-.\New-AVDMonitoringTestEvents.ps1 -WhatIf
-$testEvents = .\New-AVDMonitoringTestEvents.ps1
-$testEvents
 ~~~
 
-The generator creates AVD-Monitoring-Validation as an Application event source if absent. It writes 9001/Warning and 9002/Error with one RunId. These events can trigger existing alerts. Save the RunId, computer and UTC time. Test-* scripts never generate events.
+### Generate controlled validation events
+
+`New-AVDMonitoringTestEvents.ps1` creates two deliberately fake entries in the local Windows **Application** event log. It is an end-to-end pipeline test, not a test of real AVD user activity.
+
+The script:
+
+1. Requires elevated **Windows PowerShell 5.1** on the target session host.
+2. Creates the `AVD-Monitoring-Validation` event source in the Application log when it does not already exist.
+3. Refuses to continue if that source belongs to a different event log.
+4. Writes two entries with the same unique `RunId`, host name and UTC timestamp:
+    - Event ID `9001` at `Warning` level
+    - Event ID `9002` at `Error` level
+
+Preview the operation before writing:
+
+~~~powershell
+.\New-AVDMonitoringTestEvents.ps1 -WhatIf
+~~~
+
+Write the events and capture the returned objects:
+
+~~~powershell
+$testEvents = .\New-AVDMonitoringTestEvents.ps1
+$testEvents | Format-List
+~~~
+
+Save the returned `RunId`, computer name and UTC timestamps. Use the same `RunId` when querying the `Event` table. Existing alert rules may fire for the Warning or Error entry, so decide in advance whether test alerts should be suppressed or expected.
+
+The script changes only the local Application log and event-source registration. It does not create AVD service-side telemetry, user connections, network data or graphics data. It does not create a DCR or configure Log Analytics. `-WhatIf` performs the source check but skips event-source creation and event writes.
+
+For AMA to collect these entries, the DCR must include the Application log with an XPath that matches the event levels, for example:
+
+~~~text
+Application!*[System[(Level=1 or Level=2 or Level=3)]]
+~~~
 
 Application Warning/Error collection must include this provider, route to Microsoft-Event and survive transforms. Cache existence, extension provisioning success or a running process alone cannot prove ingestion.
 
@@ -137,11 +172,13 @@ $vmIds = @(
     "$baseId/providers/Microsoft.Compute/virtualMachines/WPNS-AVD-0"
     "$baseId/providers/Microsoft.Compute/virtualMachines/<second-vm>"
 )
-.\Test-AVDLogAnalyticsIngestion.ps1 -WorkspaceId $workspaceGuid -ExpectedVMResourceId $vmIds
-.\Test-AVDLogAnalyticsIngestion.ps1 -WorkspaceId $workspaceGuid -RunId '<RunId-from-test-host>' -TestComputer 'WPNS-AVD-0'
+.\Test-AVDLogAnalyticsIngestion.ps1 -LogAnalyticsWorkspaceResourceId $lawId -ExpectedVMResourceId $vmIds
+.\Test-AVDLogAnalyticsIngestion.ps1 -LogAnalyticsWorkspaceResourceId $lawId -RunId '<RunId-from-test-host>' -TestComputer 'WPNS-AVD-0'
 ~~~
 
-Populate the inventory with every actual VM ID. Without it, never-reporting hosts cannot be detected. A stale heartbeat can reflect a powered-off host or delayed ingestion. Recheck after allowing ingestion time and compare actual VM state.
+Populate the inventory with every actual VM ID. Without it, never-reporting hosts cannot be detected and the checker falls back to hosts observed in Heartbeat. A stopped or deallocated host is expected to have no recent heartbeat; compare the warning with the VM's actual power state before treating it as an AMA failure. Recheck after allowing ingestion time.
+
+The checker reports table activity, an Event source inventory (`Computer`, `EventLog`, `Source`, and `EventID`), AMA heartbeats and optional RunId-specific test events. Event rows confirm that some event data arrived, but do not prove the expected DCR XPath or source; review the source inventory and DCR association separately. `Event` present with `Perf` absent is consistent with an Event-only DCR and should be treated as a missing `Microsoft-Perf` source/route until the DCR check proves otherwise.
 
 The event check evaluates both IDs separately per computer, avoiding a false success from one event on each of two hosts. Missing data warns; a query/access error is reported as Error. Warnings from fuzzy table resolution should be reviewed rather than treated as complete evidence.
 

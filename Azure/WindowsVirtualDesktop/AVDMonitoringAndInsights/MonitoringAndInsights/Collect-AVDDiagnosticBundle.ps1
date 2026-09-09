@@ -104,8 +104,6 @@ function LogTails([string]$Component,[string]$Path) {
     } catch { Record $Component 'Error' $_.Exception.Message }
 }
 function UdpBindingProbe([string]$Server,[string]$Label) {
-    # RFC 5389 Binding request: type 0x0001, zero body length, magic cookie, 96-bit transaction ID.
-    # Works only where the server permits Binding. It does NOT authenticate/allocate a TURN relay.
     $client=New-Object System.Net.Sockets.UdpClient
     $random=[System.Security.Cryptography.RandomNumberGenerator]::Create()
     try {
@@ -166,7 +164,6 @@ try {
 Capture 'SMBConnections' { Get-SmbConnection | Select-Object ServerName,ShareName,UserName,Dialect,NumOpens,Encrypted }
 Record 'SMBAuthentication' 'Info' 'SMB connections and ticket metadata are context-specific evidence; no password, storage key or new drive mapping is requested.'
 if ($SharePath) {
-    # Run a potentially slow network filesystem call in an isolated, bounded process.
     $escaped=$SharePath.Replace("'","''")
     $shareCode="if (Test-Path -LiteralPath '$escaped' -ErrorAction Stop) { Write-Output 'Share readable in invoking context' } else { throw 'Share unavailable in invoking context' }"
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($shareCode))
@@ -258,4 +255,151 @@ The unpacked evidence folder is retained beside this ZIP for review. Delete it m
 "@ | Set-Content -LiteralPath (Join-Path $bundle 'README.txt') -Encoding UTF8
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Encoding UTF8
 Compress-Archive -LiteralPath $bundle -DestinationPath $zip -ErrorAction Stop
-[pscustomobject]@{ZipPath=$zip;EvidenceDirectory=$bundle;Checks=$manifest.Count;ReviewRequired=@($manifest | Where-Object Status -ne 'Collected').Count}
+
+#region HTML Report
+$collected = @($manifest | Where-Object { $_.Status -eq 'Collected' }).Count
+$noData = @($manifest | Where-Object { $_.Status -eq 'NoData' }).Count
+$notRun = @($manifest | Where-Object { $_.Status -in @('NotRun','NotPresent','NeedsUserContext','NeedsAzureCheck','NotTested','Info') }).Count
+$errored = @($manifest | Where-Object { $_.Status -in @('Error','Timeout','Inconclusive') }).Count
+
+$categoryMap = @{
+    'Machine-OS'='System';'InvokingContext'='System';'InstalledComponents'='System';'Services'='System'
+    'RDAgentRegistration'='AVD Agent';'RegistryScope'='AVD Agent'
+    'Dsregcmd-Status'='Identity';'Kerberos-TicketMetadata'='Identity';'CloudKerberos-Status'='Identity';'PRT-UserContext'='Identity'
+    'FSLogixConfiguration'='FSLogix';'FSLogixLogs'='FSLogix'
+    'SMBConnections'='Storage';'SMBAuthentication'='Storage';'ShareAccess'='Storage'
+    'StorageDNS'='Storage';'StorageTCP445'='Storage';'AzureFilesConnectivity'='Storage'
+    'NetworkConfiguration'='Network';'NetworkRoutes'='Network';'DNSServers'='Network'
+    'TimeSynchronization'='Network';'SessionListeners'='Session'
+    'AVDRequiredEndpoints'='AVD Agent';'STUNConnectivity'='Network';'TURNEndpointBinding'='Network';'TURNAllocation'='Network'
+    'RDPPolicyEvidence'='Session';'AMAProcess'='Monitoring';'AMADCRCacheMetadata'='Monitoring';'DCRConfiguration'='Monitoring'
+    'AMAExtensionLogs'='Monitoring';'EventChannelInventory'='Events';'AVDAgentEvents'='Events';'LocalMonitoringChecks'='Monitoring'
+}
+
+$rows = ''
+foreach ($m in $manifest) {
+    $cat = if ($categoryMap.ContainsKey($m.Check)) { $categoryMap[$m.Check] } else {
+        if ($m.Check -like 'Events-*') { 'Events' } else { 'Other' }
+    }
+    $badge = switch ($m.Status) {
+        'Collected'   { '<span class="badge collected">Collected</span>' }
+        'NoData'      { '<span class="badge nodata">No Data</span>' }
+        'NotRun'      { '<span class="badge notrun">Not Run</span>' }
+        'NotPresent'  { '<span class="badge notrun">Not Present</span>' }
+        'Error'       { '<span class="badge error">Error</span>' }
+        'Timeout'     { '<span class="badge error">Timeout</span>' }
+        'Inconclusive'{ '<span class="badge error">Inconclusive</span>' }
+        'Info'        { '<span class="badge info">Info</span>' }
+        'NeedsUserContext' { '<span class="badge warn">Needs User Context</span>' }
+        'NeedsAzureCheck'  { '<span class="badge warn">Needs Azure Check</span>' }
+        'NotTested'   { '<span class="badge notrun">Not Tested</span>' }
+        default       { "<span class='badge'>$($m.Status)</span>" }
+    }
+    $fileLink = if ($m.File) { "<a href='$($m.File)'>$($m.File)</a>" } else { '&mdash;' }
+    $detailEsc = [System.Net.WebUtility]::HtmlEncode($m.Details)
+    $rows += "<tr data-cat='$cat'><td>$($m.Check)</td><td>$cat</td><td>$badge</td><td class='detail'>$detailEsc</td><td class='file'>$fileLink</td></tr>`n"
+}
+
+$html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AVD Diagnostic Bundle - $env:COMPUTERNAME</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:#0d1117; color:#c9d1d9; padding:24px; }
+  h1 { font-size:1.6rem; margin-bottom:4px; color:#58a6ff; }
+  .subtitle { color:#8b949e; font-size:0.85rem; margin-bottom:20px; }
+  .cards { display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px 24px; min-width:140px; text-align:center; }
+  .card .num { font-size:2rem; font-weight:700; }
+  .card .label { font-size:0.75rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; margin-top:2px; }
+  .card.collected .num { color:#3fb950; }
+  .card.nodata .num { color:#8b949e; }
+  .card.warn .num { color:#d29922; }
+  .card.error .num { color:#f85149; }
+  .card.total .num { color:#58a6ff; }
+  .filters { margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .filters label { color:#8b949e; font-size:0.8rem; margin-right:4px; }
+  .filters button { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; }
+  .filters button:hover, .filters button.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+  .search { background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:5px 12px; border-radius:6px; font-size:0.8rem; width:220px; }
+  table { width:100%; border-collapse:collapse; background:#161b22; border:1px solid #30363d; border-radius:8px; overflow:hidden; }
+  th { background:#21262d; text-align:left; padding:10px 12px; font-size:0.75rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #30363d; position:sticky; top:0; }
+  td { padding:8px 12px; border-bottom:1px solid #21262d; font-size:0.85rem; vertical-align:top; }
+  tr:hover { background:#1c2128; }
+  td.detail { max-width:500px; word-break:break-word; color:#8b949e; }
+  td.file a { color:#58a6ff; text-decoration:none; }
+  td.file a:hover { text-decoration:underline; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600; white-space:nowrap; }
+  .badge.collected { background:#238636; color:#fff; }
+  .badge.nodata { background:#30363d; color:#8b949e; }
+  .badge.notrun { background:#30363d; color:#6e7681; }
+  .badge.error { background:#da3633; color:#fff; }
+  .badge.warn { background:#9e6a03; color:#fff; }
+  .badge.info { background:#1f6feb; color:#fff; }
+  .section-title { font-size:1.1rem; color:#c9d1d9; margin:20px 0 10px; font-weight:600; }
+  .footer { margin-top:20px; font-size:0.75rem; color:#484f58; }
+</style>
+</head>
+<body>
+<h1>AVD Diagnostic Bundle Report</h1>
+<p class="subtitle">$env:COMPUTERNAME &mdash; Generated $([datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) UTC &mdash; Lookback $LookbackHours hours</p>
+
+<div class="cards">
+  <div class="card total"><div class="num">$($manifest.Count)</div><div class="label">Total Checks</div></div>
+  <div class="card collected"><div class="num">$collected</div><div class="label">Collected</div></div>
+  <div class="card nodata"><div class="num">$noData</div><div class="label">No Data</div></div>
+  <div class="card warn"><div class="num">$notRun</div><div class="label">Skipped / Info</div></div>
+  <div class="card error"><div class="num">$errored</div><div class="label">Errors</div></div>
+</div>
+
+<div class="filters">
+  <label>FILTER:</label>
+  <button class="active" onclick="filterCat('all')">All</button>
+  <button onclick="filterCat('System')">System</button>
+  <button onclick="filterCat('AVD Agent')">AVD Agent</button>
+  <button onclick="filterCat('Identity')">Identity</button>
+  <button onclick="filterCat('FSLogix')">FSLogix</button>
+  <button onclick="filterCat('Storage')">Storage</button>
+  <button onclick="filterCat('Network')">Network</button>
+  <button onclick="filterCat('Session')">Session</button>
+  <button onclick="filterCat('Events')">Events</button>
+  <button onclick="filterCat('Monitoring')">Monitoring</button>
+  <input type="text" class="search" placeholder="Search checks..." oninput="searchTable(this.value)">
+</div>
+
+<table>
+<thead><tr><th>Check</th><th>Category</th><th>Status</th><th>Details</th><th>File</th></tr></thead>
+<tbody id="rows">$rows</tbody>
+</table>
+
+<p class="footer">Collected means evidence was saved, not that the component is healthy. Review contents before sharing through your approved support channel.</p>
+
+<script>
+function filterCat(cat) {
+  document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('#rows tr').forEach(tr => {
+    tr.style.display = (cat === 'all' || tr.dataset.cat === cat) ? '' : 'none';
+  });
+}
+function searchTable(q) {
+  var lower = q.toLowerCase();
+  document.querySelectorAll('#rows tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(lower) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>
+"@
+
+$htmlPath = Join-Path $bundle 'Report.html'
+$html | Set-Content -LiteralPath $htmlPath -Encoding UTF8
+Record 'HTMLReport' 'Collected' "Interactive HTML report with filterable table and summary cards." 'Report.html'
+#endregion
+
+[pscustomobject]@{ZipPath=$zip;EvidenceDirectory=$bundle;ReportPath=$htmlPath;Checks=$manifest.Count;ReviewRequired=@($manifest | Where-Object Status -ne 'Collected').Count}

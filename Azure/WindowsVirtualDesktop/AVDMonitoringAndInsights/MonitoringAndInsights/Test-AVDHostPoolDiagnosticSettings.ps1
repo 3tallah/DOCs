@@ -28,22 +28,26 @@ function Get-ArmList([string]$Path) {
     } while ($Path)
 }
 function Result([string]$Check, [string]$Status, [string]$Details) {
-    [pscustomobject]@{ Resource = $resource; Check = $Check; Status = $Status; Details = $Details }
+    [pscustomobject]@{ Resource = ($resource -replace '.+/'); Check = $Check; Status = $Status; Details = $Details }
 }
 
-$resource = $HostPoolResourceId.TrimEnd('/')
+$resource = $HostPoolResourceId.Trim().TrimEnd('/')
 $baseline = @('Checkpoint','Error','Management','Connection','HostRegistration','AgentHealthStatus')
 
-$expected = $LogAnalyticsWorkspaceResourceId.TrimEnd('/')
+$expected = $LogAnalyticsWorkspaceResourceId.Trim().TrimEnd('/')
 $categories = @(Get-ArmList "$resource/providers/Microsoft.Insights/diagnosticSettingsCategories?api-version=2021-05-01-preview" |
     Where-Object { $_.properties.categoryType -eq 'Logs' })
 $settings = @(Get-ArmList "$resource/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview")
 Result 'AvailableCategories' 'Info' (($categories.name | Sort-Object) -join ', ')
-$matching = @($settings | Where-Object { ([string]$_.properties.workspaceId).TrimEnd('/') -ieq $expected })
+$matching = @($settings | Where-Object { ([string]$_.properties.workspaceId).Trim().TrimEnd('/') -ieq $expected })
 Result 'ExpectedDestination' $(if ($matching.Count) { 'Pass' } else { 'Fail' }) "$($matching.Count) settings target $expected"
 foreach ($setting in $settings) {
+    $enabledLogs = @($setting.properties.logs | Where-Object { $_.enabled -eq $true } |
+        ForEach-Object {
+            if ($_.categoryGroup) { "$($_.categoryGroup)" } else { "$($_.category)" }
+        })
     Result "Setting:$($setting.name)" 'Info' ("Destination={0}; EnabledLogs={1}" -f $setting.properties.workspaceId,
-        ((@($setting.properties.logs | Where-Object { $_.enabled -eq $true }) | ForEach-Object { "$($_.category)$($_.categoryGroup)" }) -join ', '))
+        ($enabledLogs -join ', '))
 }
 $enabled = @($matching | ForEach-Object { $_.properties.logs } | Where-Object { $_.enabled -eq $true })
 $allLogs = @($enabled | Where-Object { $_.categoryGroup -ieq 'allLogs' }).Count -gt 0
@@ -52,11 +56,15 @@ foreach ($name in $baseline) {
     if ($name -notin $categories.name) { Result "Baseline:$name" 'Warning' 'Not advertised by this resource; review current Insights configuration workbook.' }
 }
 foreach ($category in $categories) {
-    $covered = $allLogs -or ($category.name -in $enabled.category)
-    foreach ($entry in $enabled) {
-        if ($entry.categoryGroup -and $entry.categoryGroup -in @($category.properties.categoryGroups)) { $covered = $true }
+    $coverage = @()
+    if ($allLogs) { $coverage += 'allLogs' }
+    if ($category.name -in @($enabled.category)) { $coverage += 'explicit category' }
+    foreach ($entry in $enabled | Where-Object { $_.categoryGroup }) {
+        if ($entry.categoryGroup -in @($category.properties.categoryGroups)) { $coverage += "group:$($entry.categoryGroup)" }
     }
+    $coverage = @($coverage | Sort-Object -Unique)
+    $covered = $coverage.Count -gt 0
     $status = if ($covered) { 'Pass' } elseif ($category.name -in $baseline) { 'Fail' } else { 'Warning' }
-    Result "Category:$($category.name)" $status "Enabled to expected destination: $covered"
+    $details = if ($covered) { "Covered by $($coverage -join ', ') at expected destination." } else { 'Not enabled at expected destination.' }
+    Result "Category:$($category.name)" $status $details
 }
-
