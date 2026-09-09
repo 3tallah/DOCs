@@ -1,0 +1,4 @@
+# The AVD content under this path is mirrored to the 3tallah/AVD repo by
+# .github/workflows/sync-avd.yml. The nested AVD clone's own git metadata must
+# never be committed into DOCs.
+Azure/WindowsVirtualDesktop/.git/

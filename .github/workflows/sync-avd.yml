@@ -1,0 +1,63 @@
+name: Sync AVD repo
+
+# Mirror DOCs/Azure/WindowsVirtualDesktop -> 3tallah/AVD on every relevant push.
+# The AVD repo is a filtered projection of this folder; DOCs master is the source of truth.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'Azure/WindowsVirtualDesktop/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout DOCs (source)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout AVD (target)
+        uses: actions/checkout@v4
+        with:
+          repository: 3tallah/AVD
+          ref: main
+          token: ${{ secrets.AVD_SYNC_TOKEN }}
+          path: avd-target
+
+      - name: Mirror folder into AVD repo
+        run: |
+          set -euo pipefail
+          SRC="Azure/WindowsVirtualDesktop"
+          DEST="avd-target"
+
+          # Safety: refuse to mirror if the nested repo metadata is present in source
+          # (it must stay untracked; see .gitignore in DOCs).
+          if [ -d "$SRC/.git" ]; then
+            echo "::error::Nested .git found under $SRC. Add it to DOCs .gitignore and untrack it."
+            exit 1
+          fi
+
+          # Remove everything in the target except its .git, then copy the folder fresh.
+          find "$DEST" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
+          mkdir -p "$DEST"
+          cp -a "$SRC/." "$DEST/"
+
+      - name: Commit and push if changed
+        working-directory: avd-target
+        run: |
+          set -euo pipefail
+          git config user.name "avd-sync[bot]"
+          git config user.email "avd-sync[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to mirror."
+            exit 0
+          fi
+          MSG="Sync from 3tallah/DOCs @ ${{ github.sha }}"
+          git commit -m "$MSG"
+          git push origin main
