@@ -17,6 +17,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not (Get-AzContext)) { throw 'Sign in with Connect-AzAccount first.' }
+$results = [System.Collections.Generic.List[pscustomobject]]::new()
 function Get-ArmJson([string]$Path) {
     $response = Invoke-AzRestMethod -Path $Path -Method GET -ErrorAction Stop
     if ([int]$response.StatusCode -ge 400) { throw "ARM GET failed ($($response.StatusCode)): $Path $($response.Content)" }
@@ -31,10 +32,11 @@ function Get-ArmList([string]$Path) {
     } while ($Path)
 }
 function Result([string]$Check, [string]$Status, [string]$Details) {
-    [pscustomobject]@{ Resource = $resource; Check = $Check; Status = $Status; Details = $Details }
+    $results.Add([pscustomobject]@{ Resource = ($resource -replace '.+/'); Check = $Check; Status = $Status; Details = $Details })
 }
 
-$resource = $HostPoolResourceId.TrimEnd('/')
+$resource = $HostPoolResourceId.Trim().TrimEnd('/')
+$lawId = $LogAnalyticsWorkspaceResourceId.Trim().TrimEnd('/')
 $hosts = @(Get-ArmList "$resource/sessionHosts?api-version=2024-04-03")
 if (-not $hosts.Count) { Result 'SessionHostInventory' 'Fail' 'No registered session hosts found.'; return }
 foreach ($sessionHost in $hosts) {
@@ -90,7 +92,7 @@ foreach ($sessionHost in $hosts) {
             $rule = (Get-ArmJson "$($ruleId)?api-version=2023-03-11").properties
             Result 'DCR' $(if ($rule.provisioningState -eq 'Succeeded') { 'Pass' } else { 'Warning' }) "$ruleId; ProvisioningState=$($rule.provisioningState)"
             $destinations = @($rule.destinations.logAnalytics | Where-Object {
-                ([string]$_.workspaceResourceId).TrimEnd('/') -ieq $LogAnalyticsWorkspaceResourceId.TrimEnd('/')
+                ([string]$_.workspaceResourceId).Trim().TrimEnd('/') -ieq $lawId
             } | ForEach-Object { $_.name })
             foreach ($source in @($rule.dataSources.windowsEventLogs)) {
                 if ($source) { Result 'EventXPath' 'Info' "$ruleId : $($source.xPathQueries -join '; ')" }
@@ -118,4 +120,44 @@ foreach ($sessionHost in $hosts) {
         $status = if ($routes[$stream]) { 'Pass' } elseif ($unreadable) { 'Error' } else { 'Fail' }
         Result "ExpectedWorkspaceRoute:$stream" $status 'Pass means source and route exist; review XPath/counter coverage and verify ingestion separately.'
     }
+}
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host " AVD DCR Association Report" -ForegroundColor Cyan
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+$resW = 14; $chkW = 32; $stsW = 7
+Write-Host ("{0,-$resW} {1,-$chkW} {2,-$stsW} Details" -f 'Resource','Check','Status') -ForegroundColor White
+Write-Host ("{0,-$resW} {1,-$chkW} {2,-$stsW} -------" -f '--------','-----','------') -ForegroundColor DarkGray
+foreach ($r in $results) {
+    $stsColor = switch ($r.Status) { 'Pass' { 'Green' } 'Fail' { 'Red' } 'Warning' { 'Yellow' } 'Error' { 'Red' } default { 'White' } }
+    Write-Host ("{0,-$resW} " -f $r.Resource) -NoNewline
+    Write-Host ("{0,-$chkW} " -f $r.Check) -NoNewline
+    Write-Host ("{0,-$stsW} " -f $r.Status) -ForegroundColor $stsColor -NoNewline
+    Write-Host $r.Details
+}
+
+$pass = @($results | Where-Object { $_.Status -eq 'Pass' }).Count
+$fail = @($results | Where-Object { $_.Status -eq 'Fail' }).Count
+$warn = @($results | Where-Object { $_.Status -eq 'Warning' }).Count
+$err = @($results | Where-Object { $_.Status -eq 'Error' }).Count
+$hostsChecked = @($results | Where-Object { $_.Check -eq 'AVDAgent' }).Count
+
+Write-Host "----------------------------------------" -ForegroundColor Cyan
+Write-Host " Hosts checked  : $hostsChecked" -ForegroundColor White
+Write-Host " Pass           : $pass" -ForegroundColor Green
+Write-Host " Fail           : $fail" -ForegroundColor $(if ($fail) { 'Red' } else { 'Green' })
+Write-Host " Warnings       : $warn" -ForegroundColor $(if ($warn) { 'Yellow' } else { 'Green' })
+Write-Host " Errors         : $err" -ForegroundColor $(if ($err) { 'Red' } else { 'Green' })
+Write-Host "----------------------------------------`n" -ForegroundColor Cyan
+
+$noDcr = @($results | Where-Object { $_.Check -eq 'DCRAssociations' -and $_.Status -eq 'Fail' })
+if ($noDcr.Count) {
+    Write-Host "[ACTION REQUIRED] No DCRs associated with these session hosts." -ForegroundColor Red
+    Write-Host "  The Log Analytics workspace has no data collection rules routing" -ForegroundColor Red
+    Write-Host "  Windows Event Logs or Performance Counters to your workspace.`n" -ForegroundColor Red
+    Write-Host "  Next steps:" -ForegroundColor Yellow
+    Write-Host "    1. Create DCRs for Microsoft-Event and Microsoft-Perf streams" -ForegroundColor Yellow
+    Write-Host "    2. Associate the DCRs with each session host VM" -ForegroundColor Yellow
+    Write-Host "    3. Re-run this script to verify ingestion routes`n" -ForegroundColor Yellow
 }

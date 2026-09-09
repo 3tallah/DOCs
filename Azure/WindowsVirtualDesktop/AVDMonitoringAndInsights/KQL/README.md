@@ -2,7 +2,7 @@
 
 KQL queries for the Log Analytics workspace used by Azure Virtual Desktop (AVD) monitoring. They verify that telemetry is actually arriving, and then inspect connections, errors, agent health, network/graphics data, transport, client versions and guest-OS (Event/Perf) data.
 
-These queries support the [monitoring and insights guide](../README.md). The PowerShell validation scripts live in the [PowerShell folder](../PowerShell/).
+These queries support the [monitoring and insights guide](../README.md). The PowerShell validation scripts live in the [MonitoringAndInsights folder](../MonitoringAndInsights/).
 
 ## Contents
 
@@ -127,7 +127,7 @@ The service-reported `TransportType` per connection from `WVDConnections`, with 
 
 ### AVD-SessionHostEvents.kql
 
-Host Windows events collected by AMA into `Event`. With defaults it lists all collected events (filterable by `ComputerFilter`). For end-to-end validation, set `OnlyValidationEvents = true` and paste the `RunId` returned by [`New-AVDMonitoringTestEvents.ps1`](../PowerShell/New-AVDMonitoringTestEvents.ps1) — it matches `Source == "AVD-Monitoring-Validation"` and event IDs 9001/9002, proving the whole pipeline (host → AMA → DCR → workspace) works.
+Host Windows events collected by AMA into `Event`. With defaults it lists all collected events (filterable by `ComputerFilter`). For end-to-end validation, set `OnlyValidationEvents = true` and paste the `RunId` returned by [`New-AVDMonitoringTestEvents.ps1`](../MonitoringAndInsights/New-AVDMonitoringTestEvents.ps1) — it matches `Source == "AVD-Monitoring-Validation"` and event IDs 9001/9002, proving the whole pipeline (host → AMA → DCR → workspace) works.
 
 ### AVD-PerformanceCounters.kql (alias: AVD-SessionHostPerformance.kql)
 

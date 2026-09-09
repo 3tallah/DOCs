@@ -28,7 +28,7 @@ These paths remain available. Their presence does not mean the older configurati
 
 ## Modernization roadmap
 
-The consolidated AVDMonitoringAndInsights package contains eight scripts under MonitoringAndInsights (five of them also kept under PowerShell for compatibility) and twenty-eight queries under KQL — fifteen base queries plus thirteen chart companions. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
+The consolidated AVDMonitoringAndInsights package contains the full script set under MonitoringAndInsights and twenty-eight queries under KQL — fifteen base queries plus thirteen chart companions. The monitoring and KQL sections are the first implementation phase. The following areas are planned, not shipped as new modules:
 
 - SessionHost: registration, agent, service and required-endpoint diagnostics.
 - IdentityAndSSO: device join, user-context PRT, cloud Kerberos and AVD Entra SSO.
