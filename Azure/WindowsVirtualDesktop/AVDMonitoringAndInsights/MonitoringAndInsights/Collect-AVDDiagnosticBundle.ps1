@@ -41,15 +41,17 @@ $zip="$bundle.zip"
 if (-not $PSCmdlet.ShouldProcess($zip,'Collect local diagnostics and create ZIP (no upload)')) { return }
 New-Item -ItemType Directory -Path $bundle -ErrorAction Stop | Out-Null
 $manifest=New-Object 'System.Collections.Generic.List[object]'
+$evidence=@{}
 function Record([string]$Name,[string]$Status,[string]$Details,[string]$File='') {
     $manifest.Add([pscustomobject]@{Check=$Name;Status=$Status;Details=$Details;File=$File})
 }
 function Capture([string]$Name,[scriptblock]$Action) {
     try {
         $data=@(& $Action)
+        $evidence[$Name]=$data
         $file="$Name.json"
         ConvertTo-Json -InputObject $data -Depth 12 | Set-Content -LiteralPath (Join-Path $bundle $file) -Encoding UTF8
-        Record $Name $(if ($data.Count) { 'Collected' } else { 'NoData' }) "$($data.Count) item(s); collection success is not a health verdict." $file
+        Record $Name $(if ($data.Count) { 'Collected' } else { 'NoData' }) "$($data.Count) item(s)" $file
     } catch { Record $Name 'Error' $_.Exception.Message }
 }
 function Native([string]$Name,[string]$Executable,[string]$Arguments,[string]$WorkingDirectory='') {
@@ -73,7 +75,10 @@ function Native([string]$Name,[string]$Executable,[string]$Arguments,[string]$Wo
             return
         }
         $file="$Name.txt"
-        @($stdout.GetAwaiter().GetResult(),$stderr.GetAwaiter().GetResult()) |
+        $outText=$stdout.GetAwaiter().GetResult()
+        $errText=$stderr.GetAwaiter().GetResult()
+        $evidence[$Name]=($outText,$errText) -join "`r`n"
+        @($outText,$errText) |
             Set-Content -LiteralPath (Join-Path $bundle $file) -Encoding UTF8
         Record $Name $(if ($process.ExitCode -eq 0) { 'Collected' } else { 'Error' }) "ExitCode=$($process.ExitCode); review output." $file
     } catch { Record $Name 'Error' $_.Exception.Message }
@@ -95,8 +100,9 @@ function LogTails([string]$Component,[string]$Path) {
         foreach ($file in $files) {
             $out="$Component-$([guid]::NewGuid().ToString('N').Substring(0,8))-$($file.Name).txt"
             try {
-                Get-Content -LiteralPath $file.FullName -Tail $TailLines |
-                    Set-Content -LiteralPath (Join-Path $bundle $out) -Encoding UTF8
+                $tail=@(Get-Content -LiteralPath $file.FullName -Tail $TailLines)
+                $evidence["$Component|$($file.Name)"]=$tail
+                $tail | Set-Content -LiteralPath (Join-Path $bundle $out) -Encoding UTF8
                 Record $Component 'Collected' "Tail of $($file.FullName); at most $TailLines lines." $out
             } catch { Record $Component 'Error' "$($file.FullName): $($_.Exception.Message)" }
         }
@@ -140,6 +146,10 @@ Capture 'InstalledComponents' {
 Capture 'Services' {
     Get-CimInstance Win32_Service | Where-Object { $_.Name -match 'RDAgent|TermService|frxsvc|frxccds|AzureMonitor|MonAgent' } |
         Select-Object Name,DisplayName,State,StartMode,ProcessId
+}
+Capture 'Disks' {
+    Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' |
+        Select-Object DeviceID,VolumeName,@{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.FreeSpace/1GB,1)}},@{n='FreePct';e={ if ($_.Size) { [math]::Round(100*$_.FreeSpace/$_.Size,1) } }}
 }
 Capture 'RDAgentRegistration' { RegistryValues 'HKLM:\SOFTWARE\Microsoft\RDInfraAgent' @('IsRegistered','AgentVersion','BrokerResourceId') }
 Record 'RegistryScope' 'Info' 'Only allowlisted registry values are collected. Registration tokens, protected extension settings and complete registry exports are excluded.'
@@ -234,13 +244,29 @@ foreach ($channel in $channels) {
     }
 }
 Capture 'AVDAgentEvents' {
-    try {
-        Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddHours(-$LookbackHours);ProviderName=@('WVD-Agent','WVD-Agent-Updater','RDAgentBootLoader')} -MaxEvents $MaxEventsPerLog |
-            Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message
-    } catch { if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw } }
+    $agentEventProviders=@('WVD-Agent','WVD-Agent-Updater','RDAgentBootLoader')
+    $agentEventRows=@()
+    foreach ($provider in $agentEventProviders) {
+        try {
+            $agentEventRows += @(Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddHours(-$LookbackHours);ProviderName=$provider} -MaxEvents $MaxEventsPerLog -ErrorAction Stop |
+                Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message)
+        } catch {
+            if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*' -or $_.Exception.Message -like '*not an event provider*') {
+                $agentEventRows += [pscustomobject]@{TimeCreated=$null;ProviderName=$provider;Id=0;LevelDisplayName='NoEvents';Message='No matching events in the lookback window, or the provider is absent on this host.'}
+            } else { throw }
+        }
+    }
+    $agentEventRows
 }
-Capture 'LocalMonitoringChecks' {
-    & (Join-Path $PSScriptRoot 'Test-AVDSessionHostMonitoring.ps1') -LookbackHours $LookbackHours
+$monitorCheckerPath=$null
+$monitorCheckerRoot=''
+if ($PSScriptRoot) { $monitorCheckerRoot=$PSScriptRoot }
+elseif ($MyInvocation.MyCommand.Path) { $monitorCheckerRoot=Split-Path -Parent $MyInvocation.MyCommand.Path }
+if ($monitorCheckerRoot) { $monitorCheckerPath=Join-Path $monitorCheckerRoot 'Test-AVDSessionHostMonitoring.ps1' }
+if ($monitorCheckerPath -and (Test-Path -LiteralPath $monitorCheckerPath)) {
+    Capture 'LocalMonitoringChecks' { & $monitorCheckerPath -LookbackHours $LookbackHours }
+} else {
+    Record 'LocalMonitoringChecks' 'NotRun' 'Test-AVDSessionHostMonitoring.ps1 was not found beside the collector; copy it to the same folder to include its local monitoring checks.'
 }
 @"
 AVD diagnostic evidence from $env:COMPUTERNAME, UTC $([datetime]::UtcNow.ToString('o')).
@@ -253,6 +279,230 @@ PRT, Kerberos and SMB results reflect the invoking identity, not all signed-in u
 STUN Binding does not validate TURN allocation or prove the transport of an actual AVD session.
 The unpacked evidence folder is retained beside this ZIP for review. Delete it manually when no longer needed.
 "@ | Set-Content -LiteralPath (Join-Path $bundle 'README.txt') -Encoding UTF8
+#region Findings
+# Heuristic triage layer (read-only): analyzes the evidence already collected in memory
+# and emits findings.json plus the "Flagged issues" section of the HTML report.
+# Findings are triage hints for common AVD failure patterns, not health verdicts.
+$findings=New-Object 'System.Collections.Generic.List[object]'
+$findingSeq=0
+function Add-Finding([string]$Severity,[string]$Category,[string]$Title,[object[]]$Evidence,[string]$Interpretation,[object[]]$NextSteps,[string]$File='',[string]$Reference='') {
+    $script:findingSeq=$script:findingSeq+1
+    $findings.Add([pscustomobject]@{
+        Id=('F{0:d3}' -f $script:findingSeq)
+        Severity=$Severity
+        Category=$Category
+        Title=$Title
+        Evidence=@($Evidence | ForEach-Object { [string]$_ })
+        Interpretation=$Interpretation
+        NextSteps=@($NextSteps | ForEach-Object { [string]$_ })
+        File=$File
+        Reference=$Reference
+    })
+}
+function TrimText([object]$Text,[int]$Max=140) {
+    if ($null -eq $Text) { return '' }
+    $t=((([string]$Text) -replace '\s+',' ')).Trim()
+    if ($t.Length -gt $Max) { $t=$t.Substring(0,$Max).TrimEnd()+'...' }
+    return $t
+}
+function Get-Status([string]$Check) {
+    foreach ($row in $manifest) { if ($row.Check -eq $Check) { return $row.Status } }
+    return $null
+}
+function Get-Val([string]$Key,[string]$PropName) {
+    $rows=$evidence[$Key]
+    if ($null -eq $rows) { return $null }
+    foreach ($row in @($rows)) {
+        if ($null -ne $row -and $row.PSObject.Properties['Name'] -and $row.Name -eq $PropName) { return $row.Value }
+    }
+    return $null
+}
+function Invoke-Analyzer([string]$Name,[scriptblock]$Body) {
+    try { & $Body } catch { Record "Analysis-$Name" 'Error' $_.Exception.Message }
+}
+Invoke-Analyzer 'Agent' {
+    $agentServiceNames=@('RDAgent','RDAgentBootLoader','TermService')
+    foreach ($svc in @($evidence['Services'])) {
+        if ($null -eq $svc -or $agentServiceNames -notcontains $svc.Name) { continue }
+        if ($svc.State -ne 'Running' -and $svc.StartMode -eq 'Auto') {
+            Add-Finding 'Critical' 'AVD Agent' "Service '$($svc.Name)' is $($svc.State) (StartMode=$($svc.StartMode))" @("Win32_Service: $($svc.Name) State=$($svc.State) StartMode=$($svc.StartMode)") 'A stopped AVD agent, bootloader, or Remote Desktop Services stack prevents broker heartbeats and new connections.' @('Start the service and watch whether it stays running; a service that stops again usually indicates a registration/token problem','Check AVDAgentEvents.json for INVALID_REGISTRATION_TOKEN or EXPIRED_MACHINE_TOKEN (event 3277)','Review the agent troubleshooting guide') 'Services.json' 'https://learn.microsoft.com/azure/virtual-desktop/troubleshoot-agent'
+        }
+        if ($svc.State -eq 'Running' -and $svc.StartMode -ne 'Auto') {
+            Add-Finding 'Warning' 'AVD Agent' "Service '$($svc.Name)' runs but StartMode=$($svc.StartMode)" @("Win32_Service: $($svc.Name) StartMode=$($svc.StartMode)") 'The service may not start after a reboot, causing intermittent availability loss.' @('Set the service startup type to Automatic') 'Services.json' ''
+        }
+    }
+    $isRegistered=Get-Val 'RDAgentRegistration' 'IsRegistered'
+    if ("$isRegistered" -eq '0') {
+        Add-Finding 'Critical' 'AVD Agent' 'Host reports IsRegistered=0' @('HKLM:\SOFTWARE\Microsoft\RDInfraAgent IsRegistered=0') 'The host is not registered with the AVD broker; it will show as Unavailable or take no sessions in the host pool.' @('Generate a fresh registration key and reregister the host per the agent troubleshooting guide','After reregistration verify IsRegistered=1') 'RDAgentRegistration.json' 'https://learn.microsoft.com/azure/virtual-desktop/troubleshoot-agent'
+    }
+    $agentVersion=Get-Val 'RDAgentRegistration' 'AgentVersion'
+    if ("$agentVersion" -eq '') {
+        Add-Finding 'Warning' 'AVD Agent' 'AgentVersion not populated' @('HKLM:\SOFTWARE\Microsoft\RDInfraAgent AgentVersion is empty or absent.') 'The agent may not have completed installation or registration.' @('Reinstall the latest AVD agent and bootloader') 'RDAgentRegistration.json' 'https://learn.microsoft.com/azure/virtual-desktop/troubleshoot-agent'
+    }
+    $agentErrors=@($evidence['AVDAgentEvents'] | Where-Object { $null -ne $_ -and $_.PSObject.Properties['LevelDisplayName'] -and $_.LevelDisplayName -in @('Error','Warning') -and "$($_.LevelDisplayName)" -ne 'NoEvents' })
+    if ($agentErrors.Count -gt 0) {
+        $agentEvLines=@()
+        foreach ($ev in ($agentErrors | Select-Object -First 3)) { $agentEvLines += "[$($ev.TimeCreated)] $($ev.ProviderName) ID=$($ev.Id): $(TrimText $ev.Message 90)" }
+        Add-Finding 'Warning' 'AVD Agent' "$($agentErrors.Count) AVD agent Error/Warning event(s) in the last $LookbackHours hours" $agentEvLines 'Agent-side warnings or errors during the lookback window; correlate their timestamps with connection failures.' @('Open AVDAgentEvents.json and read the full messages for the event IDs listed','Follow the agent troubleshooting guide for the specific event IDs') 'AVDAgentEvents.json' ''
+    }
+    if ((Get-Status 'AVDRequiredEndpoints') -eq 'NotRun') {
+        Add-Finding 'Info' 'AVD Agent' 'Required-endpoint probe not run' @('AVDRequiredEndpoints check skipped: -RunEndpointTool was not supplied') 'Without an endpoint check you cannot rule out blocked required URLs as a cause of agent or connection failures.' @('Re-run the collector with -RunEndpointTool to invoke the installed Microsoft Agent URL Tool','The Agent URL Tool output does not cover every wildcard endpoint') '' 'https://learn.microsoft.com/azure/virtual-desktop/safe-url-list'
+    }
+}
+Invoke-Analyzer 'Identity' {
+    $dsreg=[string]$evidence['Dsregcmd-Status']
+    $entraJoined=($dsreg -match '(?im)^\s*AzureAdJoined\s*:\s*YES')
+    $domainJoined=($dsreg -match '(?im)^\s*DomainJoined\s*:\s*YES')
+    if ($dsreg -ne '' -and -not $entraJoined -and -not $domainJoined) {
+        Add-Finding 'Critical' 'Identity' 'Host joined to neither AD DS nor Microsoft Entra ID' @('dsregcmd /status: AzureAdJoined=NO and DomainJoined=NO') 'AVD session hosts must be joined to AD DS or Microsoft Entra ID before the agent can register and accept host pool connections.' @('Validate the join in an elevated console with dsregcmd /status and nltest /dsgetdc:yourdomain','If a join is expected, check domain controller and Entra network reachability before rejoining') 'Dsregcmd-Status.txt' ''
+    }
+    if ($dsreg -match '(?im)^\s*AzureAdPrt\s*:\s*NO') {
+        Add-Finding 'Info' 'Identity' 'No PRT in the invoking (elevated) context' @('dsregcmd /status: AzureAdPrt : NO') 'The collector runs elevated, and elevated contexts frequently have no Primary Refresh Token; this alone does not prove the affected user lacks one.' @('In the affected user session, run dsregcmd /status without elevation and confirm AzureAdPrt : YES','PRT and ticket evidence in this bundle always reflects the invoking identity, not every signed-in user') 'Dsregcmd-Status.txt' ''
+    }
+    if ($StorageHost) {
+        $klist=[string]$evidence['Kerberos-TicketMetadata']
+        if ($klist -ne '' -and $klist -notmatch '(?i)cifs/') {
+            Add-Finding 'Info' 'Storage' "No Kerberos cifs ticket for $StorageHost in the invoking context" @('klist output contains no cifs/ service tickets') 'Azure Files Kerberos mounts need a cifs service ticket; its absence in this context hints at identity, Kerberos, or session-key configuration issues.' @('In the affected user session, run klist (and klist cloud_debug) without elevation to check for cifs tickets','Review CloudKerberos-Status.txt and your Azure Files identity configuration') 'Kerberos-TicketMetadata.txt' ''
+        }
+    }
+}
+Invoke-Analyzer 'FSLogix' {
+    $frxsvc=$null
+    foreach ($svc in @($evidence['Services'])) { if ($null -ne $svc -and $svc.Name -eq 'frxsvc') { $frxsvc=$svc } }
+    if ($null -ne $frxsvc -and $frxsvc.State -ne 'Running') {
+        Add-Finding 'Critical' 'FSLogix' "FSLogix service (frxsvc) is $($frxsvc.State)" @("Win32_Service: frxsvc State=$($frxsvc.State) StartMode=$($frxsvc.StartMode)") 'FSLogix profile loading fails when its service is not running; users get local or temporary profiles.' @('Start frxsvc and watch whether it stays running; investigate the tailed FSLogix logs in this bundle','Reinstall or repair FSLogix if the service keeps stopping') 'Services.json' 'https://learn.microsoft.com/azure/virtual-desktop/fslogix-troubleshoot'
+    }
+    $fxEnabled=Get-Val 'FSLogixConfiguration' 'Enabled'
+    $fxVhdLocations=Get-Val 'FSLogixConfiguration' 'VHDLocations'
+    if ("$fxEnabled" -eq '1' -and "$fxVhdLocations" -eq '') {
+        Add-Finding 'Critical' 'FSLogix' 'FSLogix enabled but VHDLocations is empty' @('HKLM:\SOFTWARE\FSLogix\Profiles Enabled=1; VHDLocations is empty') 'With FSLogix enabled and no profile container location configured, profile containers cannot attach.' @('Set VHDLocations to your profile share (typically via GPO or Intune)','Confirm the host can resolve and reach the profile share') 'FSLogixConfiguration.json' 'https://learn.microsoft.com/azure/virtual-desktop/fslogix-troubleshoot'
+    }
+    $fxDeleteLocal=Get-Val 'FSLogixConfiguration' 'DeleteLocalProfileWhenVHDShouldApply'
+    if ("$fxDeleteLocal" -eq '1') {
+        Add-Finding 'Warning' 'FSLogix' 'DeleteLocalProfileWhenVHDShouldApply=1' @('HKLM:\SOFTWARE\FSLogix\Profiles DeleteLocalProfileWhenVHDShouldApply=1') 'This setting deletes the matching local profile when a profile VHD should apply - a known data-loss risk when containers are unreachable.' @('Confirm this setting is intentional; Microsoft documents using it only with a migration plan','Verify profile containers are reachable before users sign in') 'FSLogixConfiguration.json' ''
+    }
+    $fxPreventFail=Get-Val 'FSLogixConfiguration' 'PreventLoginWithFailure'
+    $fxPreventTemp=Get-Val 'FSLogixConfiguration' 'PreventLoginWithTempProfile'
+    if ("$fxEnabled" -eq '1' -and ("$fxPreventFail" -ne '1' -or "$fxPreventTemp" -ne '1')) {
+        Add-Finding 'Info' 'FSLogix' 'Temporary-profile guards not enabled' @('PreventLoginWithFailure and/or PreventLoginWithTempProfile are not set to 1') 'Without these guards, users can sign in with temporary profiles when container attach fails, which hides the failure and risks data loss.' @('Consider enabling both guards so a failed profile attach blocks sign-in instead of creating a temporary profile') 'FSLogixConfiguration.json' ''
+    }
+    $fxEvents=@((@($evidence['Events-Microsoft-FSLogix-Apps_Admin']) + @($evidence['Events-Microsoft-FSLogix-Apps_Operational'])) | Where-Object { $null -ne $_ -and $_.PSObject.Properties['LevelDisplayName'] -and $_.LevelDisplayName -in @('Error','Warning') })
+    if ($fxEvents.Count -gt 0) {
+        $fxEvLines=@()
+        foreach ($ev in ($fxEvents | Select-Object -First 3)) { $fxEvLines += "[$($ev.TimeCreated)] ID=$($ev.Id): $(TrimText $ev.Message 90)" }
+        Add-Finding 'Warning' 'FSLogix' "$($fxEvents.Count) FSLogix Error/Warning event(s) in the last $LookbackHours hours" $fxEvLines 'FSLogix reported errors or warnings during the window; read them together with the tailed FSLogix logs.' @('Review Events-Microsoft-FSLogix-Apps_*.json and the FSLogixLogs-*.txt tails','Common patterns: container not found, VHD(X) attach failure, permissions on the profile share') '' 'https://learn.microsoft.com/azure/virtual-desktop/fslogix-troubleshoot'
+    }
+}
+Invoke-Analyzer 'Storage' {
+    $tcp445=@($evidence['StorageTCP445'] | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Connected'] })
+    $tcp445Failed=($tcp445.Count -gt 0 -and -not ($tcp445 | Where-Object { $_.Connected })) -or ((Get-Status 'StorageTCP445') -eq 'Error')
+    if ($tcp445Failed) {
+        Add-Finding 'Critical' 'Storage' "TCP 445 to $StorageHost failed" @("TCP connect to ${StorageHost}:445 did not succeed (see the StorageTCP445 row)") 'Azure Files SMB traffic requires outbound TCP 445; a failed connect means profile containers on that storage account cannot mount.' @('Check NSG/firewall/on-premises egress allows TCP 445 to the storage account endpoint','Confirm the storage account firewall allows this host/subnet','Verify DNS resolution (StorageDNS.json)') 'StorageTCP445.json' ''
+    }
+    if ((Get-Status 'ShareAccess') -eq 'Error') {
+        Add-Finding 'Warning' 'Storage' 'Share not readable in the invoking context' @('ShareAccess check returned an error; see ShareAccess.txt') 'The share could not be read from this elevated context - permissions, Kerberos, or connectivity are candidates.' @('Read ShareAccess.txt for the exact error','Re-run with -SharePath on the affected host; note this does not validate the affected user or profile write permissions') 'ShareAccess.txt' ''
+    }
+    $smb=@($evidence['SMBConnections'] | Where-Object { $null -ne $_ })
+    if ($smb.Count -eq 0) {
+        Add-Finding 'Info' 'Storage' 'No active SMB connections at collection time' @('Get-SmbConnection returned no rows') 'No SMB sessions existed while collecting; expected on an idle host, but notable if a user session with FSLogix was active.' @('If users with FSLogix profiles were signed in, an empty list suggests containers are not mounting') 'SMBConnections.json' ''
+    }
+}
+
+Invoke-Analyzer 'Shortpath' {
+    $fClientDisableUDP=Get-Val 'RDPPolicyEvidence' 'fClientDisableUDP'
+    if ("$fClientDisableUDP" -eq '1') {
+        Add-Finding 'Warning' 'Session' 'Client UDP disabled by policy (fClientDisableUDP=1)' @('Terminal Services policy: fClientDisableUDP=1') 'RDP over UDP (including Shortpath transport candidates) is disabled client-side by policy; connections fall back to TCP.' @('If UDP is intended, set fClientDisableUDP=0 or remove the policy','Review RDPPolicyEvidence.json for the other transport policy values') 'RDPPolicyEvidence.json' ''
+    }
+    $fUdpRedirector=Get-Val 'RDPPolicyEvidence' 'fUseUdpPortRedirector'
+    $udpPortNumber=Get-Val 'RDPPolicyEvidence' 'UdpPortNumber'
+    if ("$fUdpRedirector" -eq '1') {
+        $portText=if ("$udpPortNumber" -ne '') { "$udpPortNumber" } else { 'not set' }
+        Add-Finding 'Info' 'Session' "UDP port redirector enabled (UdpPortNumber=$portText)" @("WinStations policy: fUseUdpPortRedirector=1; UdpPortNumber=$portText") 'The UDP port redirector policy is active; it must match the intended client/transport configuration or UDP connections can fail.' @('Confirm the configured UdpPortNumber matches your design and firewall rules','See RDPPolicyEvidence.json for the raw policy values') 'RDPPolicyEvidence.json' ''
+    }
+    $qwinsta=[string]$evidence['SessionListeners']
+    if ($qwinsta -ne '' -and $qwinsta -notmatch '(?i)rdp-sxs') {
+        Add-Finding 'Warning' 'Session' 'AVD reverse-connect listener (rdp-sxs) missing' @('qwinsta output lists no rdp-sxs listener') 'The reverse-connect listener is how AVD brokered clients reach the host; without it, new connections typically fail.' @('Verify the AVD agent and bootloader are running and the host is registered (rdp-sxs appears when the agent registers)','Review SessionListeners.txt') 'SessionListeners.txt' ''
+    }
+    if ((Get-Status 'STUNConnectivity') -eq 'NotRun') {
+        Add-Finding 'Info' 'Network' 'STUN/UDP probe not run' @('STUNConnectivity check skipped: -StunServer was not supplied') 'Without a UDP/STUN probe, direct UDP (Shortpath) reachability over public networks is unverified.' @('Re-run with -StunServer from your approved endpoint list to test UDP Binding reachability','A Binding response does not prove TURN allocation or end-to-end media transport') '' ''
+    }
+    $udpEvents=@($evidence['Events-Microsoft-Windows-RemoteDesktopServices-RdpCoreCDV_Operational'] | Where-Object { $null -ne $_ -and "$($_.Message)" -match '(?i)udp' })
+    if ($udpEvents.Count -gt 0) {
+        Add-Finding 'Info' 'Session' "UDP referenced in $($udpEvents.Count) RDP core event(s)" @("RdpCoreCDV operational events mention UDP in the last $LookbackHours hours") 'UDP was at least referenced/negotiated in RDP core traffic during the window.' @('Review Events-Microsoft-Windows-RemoteDesktopServices-RdpCoreCDV_Operational.json transport messages (connection quality and transport upgrade events)') 'Events-Microsoft-Windows-RemoteDesktopServices-RdpCoreCDV_Operational.json' ''
+    }
+}
+Invoke-Analyzer 'Monitoring' {
+    $ama=@($evidence['AMAProcess'] | Where-Object { $null -ne $_ })
+    if ($ama.Count -eq 0) {
+        Add-Finding 'Critical' 'Monitoring' 'Azure Monitor Agent not detected' @('No MonAgentCore process found at collection time') 'Without Azure Monitor Agent the host sends no logs or metrics to Log Analytics; AVD insights and alerts go dark.' @('Install or repair the AzureMonitorWindowsAgent VM extension','Confirm the extension reports provisioning succeeded, then re-run the collector') 'AMAProcess.json' ''
+    }
+    $dcrCache=@($evidence['AMADCRCacheMetadata'] | Where-Object { $null -ne $_ })
+    if ($dcrCache.Count -eq 0) {
+        Add-Finding 'Warning' 'Monitoring' 'No AMA configuration (DCR) cache found' @('No AMADataStore mcsconfig cache metadata found') 'A missing DCR cache suggests the agent has not received or processed a Data Collection Rule association.' @('Verify a Data Collection Rule association exists for this host in Azure','Run Test-AVDDCRAssociation.ps1 for authoritative DCR sources/routes/identity') 'AMADCRCacheMetadata.json' ''
+    }
+    $amaErrFiles=0
+    $amaErrLines=@()
+    foreach ($evKey in @($evidence.Keys)) {
+        if ("$evKey" -like 'AMAExtensionLogs|*') {
+            $hits=@(@($evidence[$evKey]) | Where-Object { $null -ne $_ } | Select-String -Pattern '(?i)\berror\b|\bfail(ed|ure)?\b|403|exception')
+            if ($hits.Count -gt 0) {
+                $amaErrFiles=$amaErrFiles+1
+                if ($amaErrLines.Count -lt 3) { foreach ($hit in @($hits | Select-Object -First 2)) { $amaErrLines += TrimText $hit.Line 120 } }
+            }
+        }
+    }
+    if ($amaErrFiles -gt 0) {
+        Add-Finding 'Warning' 'Monitoring' "AMA extension logs contain error keywords in $amaErrFiles tailed file(s)" $amaErrLines 'Recent extension logs contain error-like keywords; this can be transient (startup noise) or a persistent ingestion/configuration failure.' @('Review the AMAExtensionLogs-*.txt tails in this bundle','Persistent 403/credential errors usually mean managed identity or DCR association problems - run Test-AVDDCRAssociation.ps1') '' ''
+    }
+    Add-Finding 'Info' 'Monitoring' 'DCR correctness requires Azure-side validation' @('Local evidence only covers agent presence, process, and cache metadata') 'Local checks cannot prove which DCRs should collect data; associations and destinations live in Azure.' @('Run Test-AVDDCRAssociation.ps1 (Azure side) for authoritative DCR sources/routes/identity','Confirm data actually arrives in AVD Insights / Log Analytics') '' ''
+}
+Invoke-Analyzer 'Session' {
+    $systemEvents=@($evidence['Events-System'] | Where-Object { $null -ne $_ })
+    $upsEvents=@($systemEvents | Where-Object { $_.PSObject.Properties['ProviderName'] -and $_.ProviderName -eq 'Microsoft-Windows-User Profile Service' -and $_.Id -ge 1500 -and $_.Id -le 1545 })
+    if ($upsEvents.Count -gt 0) {
+        $upsLines=@()
+        foreach ($ev in ($upsEvents | Select-Object -First 3)) { $upsLines += "[$($ev.TimeCreated)] ID=$($ev.Id): $(TrimText $ev.Message 90)" }
+        Add-Finding 'Warning' 'Session' "$($upsEvents.Count) User Profile Service event(s) (IDs 1500-1545) in the System log" $upsLines 'Classic profile-load failure events; with FSLogix they often correspond to container attach problems.' @('Correlate timestamps with the FSLogix findings and Events-Microsoft-FSLogix-Apps_*.json','IDs 1511/1519 indicate temporary or missing local profiles; read the full messages in Events-System.json') 'Events-System.json' ''
+    }
+    $svcFailEvents=@($systemEvents | Where-Object { $_.PSObject.Properties['ProviderName'] -and $_.ProviderName -eq 'Service Control Manager' -and $_.Id -ge 7000 -and $_.Id -le 7046 -and "$($_.Message)" -match '(?i)RDAgent|TermService|frxsvc|Remote Desktop' })
+    if ($svcFailEvents.Count -gt 0) {
+        $svcFailLines=@()
+        foreach ($ev in ($svcFailEvents | Select-Object -First 3)) { $svcFailLines += "[$($ev.TimeCreated)] ID=$($ev.Id): $(TrimText $ev.Message 90)" }
+        Add-Finding 'Warning' 'Session' "$($svcFailEvents.Count) service-failure event(s) affecting AVD components" $svcFailLines 'AVD-related services failed or crashed during the window; correlates with connection drops.' @('Cross-check Services.json and the AVD agent findings; recurring crashes usually need reinstall or configuration fixes') 'Events-System.json' ''
+    }
+    $lsmEvents=@($evidence['Events-Microsoft-Windows-TerminalServices-LocalSessionManager_Operational'] | Where-Object { $null -ne $_ })
+    $logonCount=@($lsmEvents | Where-Object { $_.Id -in @(21,22) }).Count
+    $disconnectCount=@($lsmEvents | Where-Object { $_.Id -in @(24,39,40) }).Count
+    if (($logonCount + $disconnectCount) -gt 0) {
+        Add-Finding 'Info' 'Session' "Session activity: $logonCount logon(s), $disconnectCount disconnect-type event(s) in the last $LookbackHours hours" @("LocalSessionManager events captured: $($lsmEvents.Count)") 'Context for logon-failure investigations; compare these timestamps with error events.' @('If logons fail before reaching the host, check AVD service-side connection diagnostics; OS logon failure auditing (Security 4625) is in the Security channel, which this bundle does not collect') 'Events-Microsoft-Windows-TerminalServices-LocalSessionManager_Operational.json' ''
+    }
+    $w32tm=[string]$evidence['TimeSynchronization']
+    if ($w32tm -match '(?i)leap indicator:\s*(2|3)|not synchronized|free-running') {
+        Add-Finding 'Warning' 'Network' 'Host clock not synchronized' @(TrimText $w32tm 160) 'Kerberos - and therefore SMB to Azure Files - breaks when clock skew exceeds roughly five minutes; broker heartbeats also degrade.' @('Fix the w32tm configuration and check VM guest time synchronization settings') 'TimeSynchronization.txt' ''
+    }
+    foreach ($disk in @($evidence['Disks'] | Where-Object { $null -ne $_ -and $_.PSObject.Properties['FreePct'] -and $null -ne $_.FreePct })) {
+        if ([double]$disk.FreePct -lt 10) {
+            Add-Finding 'Warning' 'System' "Low disk space on $($disk.DeviceID) ($($disk.FreePct)% free)" @("$($disk.DeviceID) FreeGB=$($disk.FreeGB) of SizeGB=$($disk.SizeGB)") 'Low disk breaks FSLogix VHD temp copies, updates, and profile writes.' @('Free space or expand the disk; review pagefile, dumps, and temp files') 'Disks.json' ''
+        }
+    }
+    $companionFails=@($evidence['LocalMonitoringChecks'] | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Status'] -and "$($_.Status)" -in @('Fail','Error') })
+    if ($companionFails.Count -gt 0) {
+        $companionLines=@()
+        foreach ($row in ($companionFails | Select-Object -First 3)) { $companionLines += "$($row.Check): $(TrimText $row.Details 90)" }
+        Add-Finding 'Warning' 'Monitoring' "Test-AVDSessionHostMonitoring reported $($companionFails.Count) Fail/Error row(s)" $companionLines 'The companion read-only checker found failing local monitoring checks on this host.' @('Review LocalMonitoringChecks.json rows and follow the per-check guidance') 'LocalMonitoringChecks.json' ''
+    }
+}
+
+if ($findings.Count -gt 0) {
+    ConvertTo-Json -InputObject $findings.ToArray() -Depth 8 | Set-Content -LiteralPath (Join-Path $bundle 'findings.json') -Encoding UTF8
+} else {
+    '[]' | Set-Content -LiteralPath (Join-Path $bundle 'findings.json') -Encoding UTF8
+}
+$findingCritical=@($findings | Where-Object { $_.Severity -eq 'Critical' }).Count
+$findingWarning=@($findings | Where-Object { $_.Severity -eq 'Warning' }).Count
+$findingInfo=@($findings | Where-Object { $_.Severity -eq 'Info' }).Count
+Record 'Findings' 'Collected' "$($findings.Count) flagged issue(s): $findingCritical critical, $findingWarning warning, $findingInfo info - see findings.json and the Flagged issues section of Report.html." 'findings.json'
+#endregion
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Encoding UTF8
 Compress-Archive -LiteralPath $bundle -DestinationPath $zip -ErrorAction Stop
 
@@ -261,9 +511,12 @@ $collected = @($manifest | Where-Object { $_.Status -eq 'Collected' }).Count
 $noData = @($manifest | Where-Object { $_.Status -eq 'NoData' }).Count
 $notRun = @($manifest | Where-Object { $_.Status -in @('NotRun','NotPresent','NeedsUserContext','NeedsAzureCheck','NotTested','Info') }).Count
 $errored = @($manifest | Where-Object { $_.Status -in @('Error','Timeout','Inconclusive') }).Count
+$findingCritical=@($findings | Where-Object { $_.Severity -eq 'Critical' }).Count
+$findingWarning=@($findings | Where-Object { $_.Severity -eq 'Warning' }).Count
+$findingInfo=@($findings | Where-Object { $_.Severity -eq 'Info' }).Count
 
 $categoryMap = @{
-    'Machine-OS'='System';'InvokingContext'='System';'InstalledComponents'='System';'Services'='System'
+    'Machine-OS'='System';'InvokingContext'='System';'InstalledComponents'='System';'Services'='System';'Disks'='System'
     'RDAgentRegistration'='AVD Agent';'RegistryScope'='AVD Agent'
     'Dsregcmd-Status'='Identity';'Kerberos-TicketMetadata'='Identity';'CloudKerberos-Status'='Identity';'PRT-UserContext'='Identity'
     'FSLogixConfiguration'='FSLogix';'FSLogixLogs'='FSLogix'
@@ -274,12 +527,13 @@ $categoryMap = @{
     'AVDRequiredEndpoints'='AVD Agent';'STUNConnectivity'='Network';'TURNEndpointBinding'='Network';'TURNAllocation'='Network'
     'RDPPolicyEvidence'='Session';'AMAProcess'='Monitoring';'AMADCRCacheMetadata'='Monitoring';'DCRConfiguration'='Monitoring'
     'AMAExtensionLogs'='Monitoring';'EventChannelInventory'='Events';'AVDAgentEvents'='Events';'LocalMonitoringChecks'='Monitoring'
+    'Findings'='Analysis';'HTMLReport'='Analysis'
 }
 
 $rows = ''
 foreach ($m in $manifest) {
     $cat = if ($categoryMap.ContainsKey($m.Check)) { $categoryMap[$m.Check] } else {
-        if ($m.Check -like 'Events-*') { 'Events' } else { 'Other' }
+        if ($m.Check -like 'Events-*') { 'Events' } elseif ($m.Check -like 'Analysis-*') { 'Analysis' } else { 'Other' }
     }
     $badge = switch ($m.Status) {
         'Collected'   { '<span class="badge collected">Collected</span>' }
@@ -299,6 +553,21 @@ foreach ($m in $manifest) {
     $detailEsc = [System.Net.WebUtility]::HtmlEncode($m.Details)
     $rows += "<tr data-cat='$cat'><td>$($m.Check)</td><td>$cat</td><td>$badge</td><td class='detail'>$detailEsc</td><td class='file'>$fileLink</td></tr>`n"
 }
+
+$findingCards = ''
+foreach ($f in $findings) {
+    $sevClass = switch ($f.Severity) { 'Critical' { 'crit' } 'Warning' { 'warn' } default { 'info' } }
+    $encTitle = [System.Net.WebUtility]::HtmlEncode($f.Title)
+    $encCat = [System.Net.WebUtility]::HtmlEncode($f.Category)
+    $encInterp = [System.Net.WebUtility]::HtmlEncode($f.Interpretation)
+    $evItems = (@($f.Evidence) | ForEach-Object { '<li>' + [System.Net.WebUtility]::HtmlEncode([string]$_) + '</li>' }) -join ''
+    $nsItems = (@($f.NextSteps) | ForEach-Object { '<li>' + [System.Net.WebUtility]::HtmlEncode([string]$_) + '</li>' }) -join ''
+    $links = ''
+    if ($f.File) { $links += "Evidence file: <a href='$([System.Net.WebUtility]::HtmlEncode($f.File))'>$([System.Net.WebUtility]::HtmlEncode($f.File))</a>" }
+    if ($f.Reference) { $links += " &middot; Reference: <a href='$([System.Net.WebUtility]::HtmlEncode($f.Reference))' target='_blank' rel='noopener'>Microsoft Learn</a>" }
+    $findingCards += "<details class='finding' data-sev='$sevClass' data-cat='$encCat'><summary><span class='badge $sevClass'>$($f.Severity)</span> <span class='ftitle'>$encTitle</span> <span class='fcat'>$encCat</span></summary><div class='fbody'><div class='fsec'>Observed evidence</div><ul class='flist'>$evItems</ul><div class='fsec'>Likely meaning</div><p class='finterp'>$encInterp</p><div class='fsec'>Suggested next steps</div><ol class='flist'>$nsItems</ol><div class='flinks'>$links</div></div></details>`n"
+}
+$findingsBlock = if ($findingCards) { $findingCards } else { "<div class='no-findings'>No issues flagged by the local heuristics. This is not a health verdict - review the evidence inventory below.</div>" }
 
 $html = @"
 <!DOCTYPE html>
@@ -341,6 +610,27 @@ $html = @"
   .badge.warn { background:#9e6a03; color:#fff; }
   .badge.info { background:#1f6feb; color:#fff; }
   .section-title { font-size:1.1rem; color:#c9d1d9; margin:20px 0 10px; font-weight:600; }
+  .card.info2 .num { color:#58a6ff; }
+  .badge.crit { background:#b62324; color:#fff; }
+  .finding { background:#161b22; border:1px solid #30363d; border-left:4px solid #6e7681; border-radius:8px; margin-bottom:8px; }
+  .finding[data-sev="crit"] { border-left-color:#f85149; }
+  .finding[data-sev="warn"] { border-left-color:#d29922; }
+  .finding[data-sev="info"] { border-left-color:#1f6feb; }
+  .finding summary { padding:12px 14px; cursor:pointer; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .finding summary::before { content:'\25B8'; color:#8b949e; }
+  .finding[open] summary::before { content:'\25BE'; }
+  .finding summary::-webkit-details-marker { display:none; }
+  .ftitle { color:#c9d1d9; font-size:0.9rem; font-weight:600; }
+  .fcat { color:#8b949e; font-size:0.72rem; border:1px solid #30363d; padding:1px 8px; border-radius:10px; }
+  .fbody { padding:0 16px 14px 16px; }
+  .fsec { font-size:0.72rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; margin:10px 0 4px; }
+  .flist { margin-left:20px; }
+  .flist li { font-size:0.85rem; color:#c9d1d9; margin-bottom:4px; word-break:break-word; }
+  .finterp { font-size:0.85rem; color:#c9d1d9; }
+  .flinks { font-size:0.75rem; margin-top:10px; color:#8b949e; }
+  .flinks a { color:#58a6ff; text-decoration:none; }
+  .flinks a:hover { text-decoration:underline; }
+  .no-findings { color:#8b949e; font-size:0.85rem; background:#161b22; border:1px dashed #30363d; padding:14px; border-radius:8px; }
   .footer { margin-top:20px; font-size:0.75rem; color:#484f58; }
 </style>
 </head>
@@ -354,10 +644,25 @@ $html = @"
   <div class="card nodata"><div class="num">$noData</div><div class="label">No Data</div></div>
   <div class="card warn"><div class="num">$notRun</div><div class="label">Skipped / Info</div></div>
   <div class="card error"><div class="num">$errored</div><div class="label">Errors</div></div>
+  <div class="card error"><div class="num">$findingCritical</div><div class="label">Critical Flags</div></div>
+  <div class="card warn"><div class="num">$findingWarning</div><div class="label">Warning Flags</div></div>
+  <div class="card info2"><div class="num">$findingInfo</div><div class="label">Info Notes</div></div>
 </div>
 
+<div class="section-title">Flagged issues &mdash; triage findings (heuristics, not health verdicts)</div>
+<div class="filters sevfilters">
+  <label>SEVERITY:</label>
+  <button class="active" onclick="filterSev('all')">All</button>
+  <button onclick="filterSev('crit')">Critical</button>
+  <button onclick="filterSev('warn')">Warning</button>
+  <button onclick="filterSev('info')">Info</button>
+</div>
+<div id="findings">$findingsBlock</div>
+
+<div class="section-title">Evidence inventory &mdash; every check</div>
+
 <div class="filters">
-  <label>FILTER:</label>
+  <label>CATEGORY:</label>
   <button class="active" onclick="filterCat('all')">All</button>
   <button onclick="filterCat('System')">System</button>
   <button onclick="filterCat('AVD Agent')">AVD Agent</button>
@@ -368,6 +673,7 @@ $html = @"
   <button onclick="filterCat('Session')">Session</button>
   <button onclick="filterCat('Events')">Events</button>
   <button onclick="filterCat('Monitoring')">Monitoring</button>
+  <button onclick="filterCat('Analysis')">Analysis</button>
   <input type="text" class="search" placeholder="Search checks..." oninput="searchTable(this.value)">
 </div>
 
@@ -376,7 +682,7 @@ $html = @"
 <tbody id="rows">$rows</tbody>
 </table>
 
-<p class="footer">Collected means evidence was saved, not that the component is healthy. Review contents before sharing through your approved support channel.</p>
+<p class="footer">Collected means evidence was saved, not that the component is healthy. Flagged issues are local heuristics for triage &mdash; verify before acting on them. Review contents before sharing through your approved support channel.</p>
 
 <script>
 function filterCat(cat) {
@@ -386,10 +692,20 @@ function filterCat(cat) {
     tr.style.display = (cat === 'all' || tr.dataset.cat === cat) ? '' : 'none';
   });
 }
+function filterSev(sev) {
+  document.querySelectorAll('.sevfilters button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('#findings .finding').forEach(d => {
+    d.style.display = (sev === 'all' || d.dataset.sev === sev) ? '' : 'none';
+  });
+}
 function searchTable(q) {
   var lower = q.toLowerCase();
   document.querySelectorAll('#rows tr').forEach(tr => {
     tr.style.display = tr.textContent.toLowerCase().includes(lower) ? '' : 'none';
+  });
+  document.querySelectorAll('#findings .finding').forEach(d => {
+    d.style.display = d.textContent.toLowerCase().includes(lower) ? '' : 'none';
   });
 }
 </script>
@@ -399,7 +715,7 @@ function searchTable(q) {
 
 $htmlPath = Join-Path $bundle 'Report.html'
 $html | Set-Content -LiteralPath $htmlPath -Encoding UTF8
-Record 'HTMLReport' 'Collected' "Interactive HTML report with filterable table and summary cards." 'Report.html'
+Record 'HTMLReport' 'Collected' "Interactive HTML report: flagged issues (triage findings) plus a filterable evidence inventory." 'Report.html'
 #endregion
 
-[pscustomobject]@{ZipPath=$zip;EvidenceDirectory=$bundle;ReportPath=$htmlPath;Checks=$manifest.Count;ReviewRequired=@($manifest | Where-Object Status -ne 'Collected').Count}
+[pscustomobject]@{ZipPath=$zip;EvidenceDirectory=$bundle;ReportPath=$htmlPath;Checks=$manifest.Count;Findings=$findings.Count;CriticalFindings=$findingCritical;WarningFindings=$findingWarning;ReviewRequired=@($manifest | Where-Object Status -ne 'Collected').Count}
