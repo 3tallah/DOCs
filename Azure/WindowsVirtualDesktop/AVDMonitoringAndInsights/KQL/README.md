@@ -2,9 +2,11 @@
 
 KQL queries for the Log Analytics workspace used by Azure Virtual Desktop (AVD) monitoring. They verify that telemetry is actually arriving, and then inspect connections, errors, agent health, network/graphics data, transport, client versions and guest-OS (Event/Perf) data.
 
-These queries support the [monitoring and insights guide](../README.md). The PowerShell validation scripts live in the [MonitoringAndInsights folder](../MonitoringAndInsights/).
+These queries support the [monitoring and insights guide](../README.md). The PowerShell validation scripts live in the [PowerShellScripts folder](../PowerShellScripts/).
 
 ## Contents
+
+The folder holds **38 `.kql` files**: 25 base queries and 13 `*Chart.kql` companions. The tables below cover all of them — service-side and ingestion queries here, host-operations queries under [Cost-optimized host monitoring](#cost-optimized-host-monitoring), and the render companions under [Chart companions](#chart-companions).
 
 | Query | Source table(s) | What it answers |
 | --- | --- | --- |
@@ -27,7 +29,7 @@ These queries support the [monitoring and insights guide](../README.md). The Pow
 
 ## Cost-optimized host monitoring
 
-These queries discover session hosts from the `Computer` column in `Perf` or `Event`; they do not require a hard-coded host list. They are designed for the DCR created by [Set-AVDCostOptimizedMonitoring.ps1](../MonitoringAndInsights/Set-AVDCostOptimizedMonitoring.ps1), but remain useful with any compatible Event/Perf collection.
+These queries discover session hosts from the `Computer` column in `Perf` or `Event`; they do not require a hard-coded host list. They are designed for the DCR created by [Set-AVDCostOptimizedMonitoring.ps1](../PowerShellScripts/Set-AVDCostOptimizedMonitoring.ps1), but remain useful with any compatible Event/Perf collection.
 
 | Query | Source table | What it answers |
 | --- | --- | --- |
@@ -42,9 +44,9 @@ These queries discover session hosts from the `Computer` column in `Perf` or `Ev
 | [AVD-TopWindowsEventIds.kql](AVD-TopWindowsEventIds.kql) | `Event` | Which event IDs recur most often across hosts? |
 | [AVD-OverallHostHealth.kql](AVD-OverallHostHealth.kql) | `Perf` | What is the compact CPU, memory, session-density and freshness view for every observed host? |
 
-The chart queries use `render timechart` directly and automatically create a series per discovered host. A host appears only when it has matching rows in the selected lookback window. `AVD-UserInputDelayByHost.kql` requires that the DCR collect the optional per-session input-delay counter; the cost-optimized DCR intentionally excludes the higher-cardinality per-process variant.
+Six of these ten queries — `AVD-CPUByHost`, `AVD-MemoryByHost`, `AVD-AvailableMemoryByHost`, `AVD-DiskLatencyByHost`, `AVD-ActiveSessionsByHost` and `AVD-UserInputDelayByHost` — end in `render timechart` themselves and automatically create a series per discovered host, so they have no separate `*Chart.kql` file. The remaining four (`AVD-PerfIngestionHealth`, `AVD-WindowsEventHealthByHost`, `AVD-TopWindowsEventIds`, `AVD-OverallHostHealth`) are table-only summaries. A host appears only when it has matching rows in the selected lookback window. `AVD-UserInputDelayByHost.kql` requires that the DCR collect the optional per-session input-delay counter; the cost-optimized DCR intentionally excludes the higher-cardinality per-process variant.
 
-Every base query also has a `*Chart.kql` companion that renders the same data as a chart — see [Chart companions](#chart-companions).
+Not every base query has a `*Chart.kql` companion. The 13 that do are the service-side and ingestion queries listed under [Chart companions](#chart-companions).
 
 ## How to use
 
@@ -127,7 +129,7 @@ The service-reported `TransportType` per connection from `WVDConnections`, with 
 
 ### AVD-SessionHostEvents.kql
 
-Host Windows events collected by AMA into `Event`. With defaults it lists all collected events (filterable by `ComputerFilter`). For end-to-end validation, set `OnlyValidationEvents = true` and paste the `RunId` returned by [`New-AVDMonitoringTestEvents.ps1`](../MonitoringAndInsights/New-AVDMonitoringTestEvents.ps1) — it matches `Source == "AVD-Monitoring-Validation"` and event IDs 9001/9002, proving the whole pipeline (host → AMA → DCR → workspace) works.
+Host Windows events collected by AMA into `Event`. With defaults it lists all collected events (filterable by `ComputerFilter`). For end-to-end validation, set `OnlyValidationEvents = true` and paste the `RunId` returned by [`New-AVDMonitoringTestEvents.ps1`](../PowerShellScripts/New-AVDMonitoringTestEvents.ps1) — it matches `Source == "AVD-Monitoring-Validation"` and event IDs 9001/9002, proving the whole pipeline (host → AMA → DCR → workspace) works.
 
 ### AVD-PerformanceCounters.kql (alias: AVD-SessionHostPerformance.kql)
 
@@ -141,7 +143,7 @@ FSLogix profile events from `Event`: rows where `EventLog` is `Microsoft-FSLogix
 
 ## Chart companions
 
-Each base query has an `*Chart.kql` companion that renders the same telemetry as a chart (mostly `render timechart`, one series per status/level/code/transport). They use the same `Lookback`/filter variables as their base query plus `BinSize` (default `1h`); averages per bin smooth outliers, so inspect the table query for detail. File headers note how to switch render type (e.g. stacked `columnchart`, `piechart`).
+Each of the 13 queries below has an `*Chart.kql` companion that renders the same telemetry as a chart (mostly `render timechart`, one series per status/level/code/transport). They use the same `Lookback`/filter variables as their base query plus `BinSize` (default `1h`); averages per bin smooth outliers, so inspect the table query for detail. File headers note how to switch render type (e.g. stacked `columnchart`, `piechart`). The cost-optimized host queries are not listed here — six of them render inline and four are table-only.
 
 | Chart | Based on | What it shows |
 | --- | --- | --- |
@@ -171,7 +173,7 @@ Each base query has an `*Chart.kql` companion that renders the same telemetry as
 
 ## Notes
 
-- `AVD-AllTelemetryTables.kql` and `AVD-SessionHostPerformance.kql` are duplicate filenames kept for compatibility; they are byte-identical to `AVD-AllTables.kql` and `AVD-PerformanceCounters.kql`, so `AVD-AllTablesChart.kql` and `AVD-PerformanceCountersChart.kql` serve them as well.
+- `AVD-AllTelemetryTables.kql` and `AVD-SessionHostPerformance.kql` are duplicate filenames kept for compatibility; they are byte-identical to `AVD-AllTables.kql` and `AVD-PerformanceCounters.kql` (SHA256 re-verified on 2026-09-11), so `AVD-AllTablesChart.kql` and `AVD-PerformanceCountersChart.kql` serve them as well.
 - Queries are read-only; they do not modify the workspace.
 - Table/column names reflect the AVD diagnostic tables at the time of writing; if Microsoft adds or renames tables, update the `Expected` datatable in `AVD-AllTables.kql` accordingly.
 - See the parent [README](../README.md) for prerequisites and validation status.

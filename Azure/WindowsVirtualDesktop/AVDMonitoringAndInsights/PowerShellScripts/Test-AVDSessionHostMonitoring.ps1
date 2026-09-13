@@ -101,8 +101,8 @@ try {
         LogName='Application'; StartTime=(Get-Date).AddHours(-$LookbackHours)
         ProviderName=@('WVD-Agent','WVD-Agent-Updater','RDAgentBootLoader')
     } -MaxEvents 20 -ErrorAction Stop)
-    foreach ($event in $events) {
-        Result 'AVDAgentEvent' 'Info' "$($event.TimeCreated.ToUniversalTime().ToString('o')); $($event.ProviderName); ID=$($event.Id); $($event.LevelDisplayName); $($event.Message)"
+    foreach ($agentEvent in $events) {
+        Result 'AVDAgentEvent' 'Info' "$($agentEvent.TimeCreated.ToUniversalTime().ToString('o')); $($agentEvent.ProviderName); ID=$($agentEvent.Id); $($agentEvent.LevelDisplayName); $($agentEvent.Message)"
     }
 } catch {
     if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { Result 'AVDAgentEvents' 'Info' 'No matching recent agent events.' }

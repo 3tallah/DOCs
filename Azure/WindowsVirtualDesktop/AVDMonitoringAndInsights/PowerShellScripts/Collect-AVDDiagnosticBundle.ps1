@@ -192,9 +192,44 @@ if ($StorageHost) {
         } finally { $tcp.Dispose() }
     }
 } else { Record 'AzureFilesConnectivity' 'NotRun' 'Supply -StorageHost or -SharePath for DNS/TCP 445 checks.' }
-Capture 'NetworkConfiguration' { Get-NetIPConfiguration -Detailed }
+Capture 'NetworkConfiguration' {
+    # Project to scalars: Get-NetIPConfiguration returns nested CIM instances whose
+    # CimClass/CimSuperClass inheritance graph serializes to ~25 MB under -Depth 12.
+    Get-NetIPConfiguration -Detailed | ForEach-Object {
+        [pscustomobject]@{
+            ComputerName               = $_.ComputerName
+            InterfaceAlias             = $_.InterfaceAlias
+            InterfaceIndex             = $_.InterfaceIndex
+            InterfaceDescription       = $_.InterfaceDescription
+            CompartmentId              = $_.CompartmentId
+            IPv4Address                = [string[]]$_.IPv4Address.IPAddress
+            IPv6Address                = [string[]]$_.IPv6Address.IPAddress
+            IPv6LinkLocalAddress       = [string[]]$_.IPv6LinkLocalAddress.IPAddress
+            IPv4DefaultGateway         = [string[]]$_.IPv4DefaultGateway.NextHop
+            IPv6DefaultGateway         = [string[]]$_.IPv6DefaultGateway.NextHop
+            DNSServer                  = [string[]]$_.DNSServer.ServerAddresses
+            NetAdapterStatus           = [string]$_.NetAdapter.Status
+            NetAdapterMacAddress       = [string]$_.NetAdapter.MacAddress
+            NetAdapterLinkSpeed        = [string]$_.NetAdapter.LinkSpeed
+            NetProfileName             = [string]$_.NetProfile.Name
+            NetProfileCategory         = [string]$_.NetProfile.NetworkCategory
+            NetProfileIPv4Connectivity = [string]$_.NetProfile.IPv4Connectivity
+            NetProfileIPv6Connectivity = [string]$_.NetProfile.IPv6Connectivity
+        }
+    }
+}
 Capture 'NetworkRoutes' { Get-NetRoute | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric,AddressFamily }
-Capture 'DNSServers' { Get-DnsClientServerAddress }
+Capture 'DNSServers' {
+    # Same projection reason as NetworkConfiguration: raw CIM instances serialize to ~7 MB.
+    Get-DnsClientServerAddress | ForEach-Object {
+        [pscustomobject]@{
+            InterfaceAlias  = $_.InterfaceAlias
+            InterfaceIndex  = $_.InterfaceIndex
+            AddressFamily   = switch ([int]$_.AddressFamily) { 2 { 'IPv4' } 23 { 'IPv6' } default { "Unknown($($_.AddressFamily))" } }
+            ServerAddresses = [string[]]$_.ServerAddresses
+        }
+    }
+}
 Native 'TimeSynchronization' "$env:SystemRoot\System32\w32tm.exe" '/query /status'
 Native 'SessionListeners' "$env:SystemRoot\System32\qwinsta.exe" ''
 if ($RunEndpointTool) {

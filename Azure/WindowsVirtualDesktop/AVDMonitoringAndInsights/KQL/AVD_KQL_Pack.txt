@@ -1,0 +1,113 @@
+// Azure Virtual Desktop KQL pack
+//
+// Comments use //, which is KQL. Do not use --, which switches supported editors into T-SQL mode
+// and fails to parse before the query runs.
+//
+// Run one query at a time; each is self-contained and sets its own Lookback.
+// Verified against Log Analytics workspace LAW-WPNS-AVD on 2026-09-11, all six returning rows.
+//
+// Requires AVD host pool diagnostic settings (Connection, Error, Checkpoint, HostRegistration,
+// AgentHealthStatus, NetworkData, Management) and guest Perf counters via Azure Monitor Agent.
+// Confirm what is actually flowing before trusting any result:
+//
+//   union withsource=TableName isfuzzy=true
+//       WVDConnections, WVDCheckpoints, WVDErrors, WVDAgentHealthStatus,
+//       WVDConnectionNetworkData, WVDManagement, Perf
+//   | where TimeGenerated > ago(30d)
+//   | summarize Rows = count(), LastRecord = max(TimeGenerated) by TableName
+
+
+// 1. Connection attempts, failures and failure rate by session host and user.
+// One connection emits several lifecycle rows, so attempts are counted per CorrelationId.
+// WVDConnections has no "Failed" state; its states are Started, Connected and Completed.
+// Failure is therefore derived by correlating WVDErrors on CorrelationId.
+let Lookback = 7d;
+let FailedCorrelations = WVDErrors
+| where TimeGenerated > ago(Lookback)
+| distinct CorrelationId;
+WVDConnections
+| where TimeGenerated > ago(Lookback)
+| summarize arg_max(TimeGenerated, SessionHostName, UserName, TransportType, ClientOS, ClientVersion) by CorrelationId
+| extend IsFailed = CorrelationId in (FailedCorrelations)
+| summarize Attempts = count(), Failures = countif(IsFailed),
+            FailureRate = round(100.0 * countif(IsFailed) / count(), 2)
+    by SessionHostName, UserName, TransportType, ClientOS, ClientVersion, bin(TimeGenerated, 1h)
+| order by FailureRate desc
+
+
+// 2. Network round-trip time and transport by session host.
+// Samples live in WVDConnectionNetworkData as EstRoundTripTimeInMs and EstAvailableBandwidthKBps.
+// Those rows carry no host, user or transport column, so enrich from one WVDConnections row
+// per CorrelationId. Without the arg_max the join multiplies the network samples.
+let Lookback = 7d;
+let Connections = WVDConnections
+| where TimeGenerated > ago(Lookback)
+| summarize arg_max(TimeGenerated, SessionHostName, UserName, TransportType) by CorrelationId
+| project CorrelationId, SessionHostName, UserName, TransportType;
+WVDConnectionNetworkData
+| where TimeGenerated > ago(Lookback)
+| join kind=leftouter Connections on CorrelationId
+| summarize AvgRTTms = round(avg(EstRoundTripTimeInMs), 1),
+            MaxRTTms = max(EstRoundTripTimeInMs),
+            AvgBandwidthKBps = round(avg(EstAvailableBandwidthKBps), 0),
+            Transport = any(TransportType)
+    by SessionHostName, bin(TimeGenerated, 1h)
+| order by AvgRTTms desc
+
+
+// 3. Session lifecycle, including reconnects.
+// PredecessorConnectionId identifies automatic reconnects; it does not capture every manual one.
+let Lookback = 7d;
+WVDConnections
+| where TimeGenerated > ago(Lookback)
+| extend ConnectionKind = iff(isnotempty(PredecessorConnectionId), "Reconnect", "New")
+| summarize Events = count() by UserName, SessionHostName, State, ConnectionKind, bin(TimeGenerated, 1h)
+| order by Events desc
+
+
+// 4. Agent version and last report per session host.
+// WVDAgentHealthStatus is the agent-health table; WVDCheckpoints does not carry version columns.
+// A host missing from this table cannot be detected here; compare against the Azure inventory.
+let Lookback = 7d;
+WVDAgentHealthStatus
+| where TimeGenerated > ago(Lookback)
+| summarize arg_max(TimeGenerated, Status, AgentVersion, SxSStackVersion, LastHeartBeat) by SessionHostName
+| project SessionHostName, Status, AgentVersion, SxSStackVersion, LastHeartBeat,
+          LastSeen = TimeGenerated, ReportAge = now() - TimeGenerated
+| order by LastSeen asc
+
+
+// 5. Logon duration distribution.
+// There is no LogonDurationMs column. Duration is the gap between the Started and Connected
+// rows of one CorrelationId. Correlations lacking either row are dropped, not counted as zero.
+let Lookback = 7d;
+WVDConnections
+| where TimeGenerated > ago(Lookback)
+| where State in ("Started", "Connected")
+| summarize StartTime = minif(TimeGenerated, State == "Started"),
+            ConnectTime = minif(TimeGenerated, State == "Connected"),
+            SessionHostName = any(SessionHostName),
+            UserName = any(UserName)
+    by CorrelationId
+| where isnotempty(StartTime) and isnotempty(ConnectTime)
+| extend LogonDurationMs = (ConnectTime - StartTime) / 1ms
+| summarize AvgLogonMs = round(avg(LogonDurationMs), 0),
+            P95LogonMs = round(percentile(LogonDurationMs, 95), 0),
+            Logons = count()
+    by SessionHostName, bin(ConnectTime, 1h)
+| order by P95LogonMs desc
+
+
+// 6. Session host CPU and memory.
+// Guest performance comes from Perf, not from any AVD diagnostic table.
+// Computer is the guest hostname and will not always match SessionHostName exactly.
+let Lookback = 7d;
+let BinSize = 5m;
+Perf
+| where TimeGenerated > ago(Lookback)
+| where (ObjectName =~ "Processor Information" and CounterName =~ "% Processor Time" and InstanceName == "_Total")
+     or (ObjectName =~ "Memory" and CounterName =~ "% Committed Bytes In Use")
+| summarize AvgCPU = round(avgif(CounterValue, CounterName =~ "% Processor Time"), 1),
+            AvgMemory = round(avgif(CounterValue, CounterName =~ "% Committed Bytes In Use"), 1)
+    by Computer, bin(TimeGenerated, BinSize)
+| order by AvgCPU desc

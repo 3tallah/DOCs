@@ -179,6 +179,13 @@ $testEvents | Format-List
 
 Save the returned `RunId`, computer name and UTC timestamps. Use the same `RunId` when querying the `Event` table. Existing alert rules may fire for the Warning or Error entry, so decide in advance whether test alerts should be suppressed or expected.
 
+`-RunId` is typed `[guid]`. Passing a descriptive label such as `DOCTEST-001` fails parameter binding with `Cannot convert value ... to type "System.Guid"`. Omit the parameter to let the script generate one, or supply a real GUID:
+
+~~~powershell
+$runId = [guid]::NewGuid()
+$testEvents = .\New-AVDMonitoringTestEvents.ps1 -RunId $runId
+~~~
+
 The script changes only the local Application log and event-source registration. It does not create AVD service-side telemetry, user connections, network data or graphics data. It does not create a DCR or configure Log Analytics. `-WhatIf` performs the source check but skips event-source creation and event writes.
 
 For AMA to collect these entries, the DCR must include the Application log with an XPath that matches the event levels, for example:
@@ -273,6 +280,77 @@ Test scripts emit Resource, Check, Status and Details:
 - Info: context rather than a health verdict.
 
 The bundle uses Collected/NoData/Error/NotRun and other evidence statuses in its manifest. Collected never means healthy. No script exits a job with failure merely because a result object says Fail; automation should explicitly check Fail/Error rows. Capture objects before formatting if exporting.
+
+### Always materialize output before calling `exit`
+
+Every `Test-*` script writes result **objects** to the pipeline and relies on PowerShell's
+default table formatter to render them. That formatter buffers rows to auto-size its
+columns, and `exit` tears down the runspace **before the buffer is flushed**. A wrapper
+that runs a script and then calls `exit` therefore records a silent, empty, exit-0
+"success".
+
+Measured against `Test-AVDHostPoolDiagnosticSettings.ps1` (15 result objects):
+
+| Wrapper body | Captured stdout |
+| --- | --- |
+| `& .\Test-...ps1 @params` | 4,128 bytes |
+| `& .\Test-...ps1 @params` then `exit 0` | **6 bytes — all output lost** |
+| `& .\Test-...ps1 @params \| Out-String -Width 4096` then `exit 0` | 12,258 bytes |
+
+Materialize the objects first in any wrapper, scheduled task or pipeline step:
+
+```powershell
+# Correct: results exist as data before the process terminates.
+$results = & '.\Test-AVDHostPoolDiagnosticSettings.ps1' `
+    -HostPoolResourceId $hostPoolId `
+    -LogAnalyticsWorkspaceResourceId $lawId
+
+$results | Export-Csv -LiteralPath '.\hostpool-diagnostics.csv' -NoTypeInformation -Encoding UTF8
+
+$failed = @($results | Where-Object { $_.Status -in @('Fail','Error') })
+exit $(if ($failed.Count) { 1 } else { 0 })
+```
+
+`Out-String`, `Export-Csv`, `ConvertTo-Json` and assignment to a variable are all safe.
+Relying on implicit console formatting is not.
+
+## Validation status
+
+The whole suite was executed end to end against live host pool `WPNS-AVD` (subscription `beccc7a6-…`, workspace `LAW-WPNS-AVD`, 2 session hosts).
+
+| Script | Result |
+| --- | --- |
+| `Test-AVDMonitoringPrerequisites.ps1` | 6 Pass / 3 Info |
+| `Test-AVDHostPoolDiagnosticSettings.ps1` | 13 Pass / 2 Info / 0 Fail (all 11 categories Pass) |
+| `Test-AVDWorkspaceDiagnosticSettings.ps1` | 6 Pass / 2 Info / 0 Fail (all 4 categories Pass) |
+| `Test-AVDDCRAssociation.ps1` | 21 Pass / 0 Fail |
+| `Test-AVDLogAnalyticsIngestion.ps1` | 6 Pass / 10 Warning — see below |
+| `Test-AVDSessionHostMonitoring.ps1` | Ran elevated; 20 Pass / 6 Warning / 2 Fail, correctly identifying a non-AVD host |
+| `Validate-AVDSessionHostMonitoring-Interactive.ps1` | Ran elevated; full console validation pass |
+| `New-AVDMonitoringTestEvents.ps1` | Wrote events 9001 and 9002; `-RunId` must be a GUID |
+| `Collect-AVDDiagnosticBundle.ps1` | Ran elevated; 43 checks, 10 findings, `Report.html` produced |
+| `Invoke-AVDSessionHostReport.ps1` | Ran `-CollectOnly -WhatIf`; storage account `stavdreports` unreachable from the operator network |
+| `Invoke-AVDMonitoringReportUpload.ps1` | Payload script, not run directly; fails gracefully with `UPLOAD_FAIL` and exit 1 |
+| `Set-AVDCostOptimizedMonitoring.ps1` | `-WhatIf` plan correct: 14 counters at 60 s, 6 Event XPath queries, both hosts |
+
+Three real findings came out of that run and are worth acting on:
+
+1. **The `Perf` table contained zero rows for the last 24 hours**, even though the DCR association check passed and the AMA heartbeat was fresh (most recent heartbeat 0.6 minutes old, 1440 `Heartbeat` records). This is exactly the "configured but not ingesting" gap the checks exist to expose: passing Azure-side configuration is not proof of ingestion. Investigate the performance-counter data source and its transform before trusting any CPU/memory dashboard or alert.
+2. **Two overlapping DCRs are associated with both session hosts** — `DCR-AVD-CostOptimized` and `WPNS-AVD-DCR` — and they define duplicate counters such as `\Processor Information(_Total)\% Processor Time`. Overlapping DCRs ingest the same sample twice and bill twice. Consolidate to one.
+3. **AVD agent heartbeats are stale.** `WPNS-AVD-0` last reported 2026-09-07 and `WPNS-AVD-1` on 2026-09-04, against a current date of 2026-09-11. Stale agent health is independent of AMA health; check the AVD agent and the hosts' registration state.
+
+Elevated scripts must be started from an elevated session. Files retrieved from the internet also carry a `Zone.Identifier` stream and need `Unblock-File` before the first run under `RemoteSigned`; no script in this folder currently carries one.
+
+## Static validation
+
+Re-verified on 2026-09-11 across all 12 scripts in this folder:
+
+- PowerShell AST parse: **0 errors**.
+- PSScriptAnalyzer 1.25.0: **0 `Error`-severity findings**. Remaining warnings are the accepted `PSAvoidUsingWriteHost` (these are interactive console tools) and `PSReviewUnusedParameter` false positives where parameters are used only inside interpolated strings or nested functions.
+- Comment-based help present in every script.
+- `Set-AVDCostOptimizedMonitoring.ps1` DCR content matches this README: 14 counters, 60-second sampling, 6 Event XPath queries, `transformKql = source`.
+- `Test-AVDSessionHostMonitoring.ps1` defaults match this README: 20 counters and 4 event channels.
+- All relative links in this README resolve.
 
 ## References
 

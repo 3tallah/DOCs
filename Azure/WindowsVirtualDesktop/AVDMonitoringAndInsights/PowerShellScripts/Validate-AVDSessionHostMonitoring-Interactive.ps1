@@ -9,7 +9,7 @@ Covers AVD services, registration, RDP/SxS listener, Azure Monitor Agent, DCR co
 cache, extension logs, required event logs (including FSLogix), recent agent events,
 performance counters, and writes two labeled test events to the Application log.
 
-For pipeline use, prefer the structured scripts in the MonitoringAndInsights folder:
+For pipeline use, prefer the structured scripts in the PowerShellScripts folder:
   - Test-AVDSessionHostMonitoring.ps1  (read-only, object output; also includes
     Terminal Services, User Input Delay and RemoteFX counters)
   - New-AVDMonitoringTestEvent.ps1     (test events with -WhatIf support)

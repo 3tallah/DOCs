@@ -124,8 +124,8 @@ $computerPredicate
         if (-not $computers.Count) { Result $WorkspaceId.ToString() 'TestEvents' 'Warning' "No events for RunId=$RunId; allow ingestion time and review Application XPath/transforms." }
         foreach ($computer in $computers) {
             foreach ($eventId in @(9001,9002)) {
-                $event=$events | Where-Object { $_.Computer -eq $computer -and $_.EventID -eq $eventId }
-                Result $computer "TestEvent:$eventId" $(if ($event) { 'Pass' } else { 'Warning' }) "RunId=$RunId; LastRecord=$($event.LastRecord)"
+                $matchedEvent=$events | Where-Object { $_.Computer -eq $computer -and $_.EventID -eq $eventId }
+                Result $computer "TestEvent:$eventId" $(if ($matchedEvent) { 'Pass' } else { 'Warning' }) "RunId=$RunId; LastRecord=$($matchedEvent.LastRecord)"
             }
         }
     } catch { Result $WorkspaceId.ToString() 'TestEventsQuery' 'Error' $_.Exception.Message }
